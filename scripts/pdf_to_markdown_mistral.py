@@ -17,11 +17,8 @@ from typing import Iterable, Optional, Sequence
 
 from mistralai import Mistral
 from dotenv import load_dotenv
+from openai import OpenAI
 
-try:  # Optional import; only required when using the vision refinement step.
-    from openai import OpenAI
-except ImportError:  # pragma: no cover - optional dependency
-    OpenAI = None  # type: ignore[assignment]
 
 try:  # Optional import used for retry logic.
     import httpx
@@ -47,6 +44,9 @@ LOGGER = logging.getLogger(__name__)
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(PROJECT_ROOT / ".env")
+
+# Default vision model for page refinement
+VISION_LLM = "anthropic/claude-haiku-4.5"
 
 
 class VisionRefinementError(RuntimeError):
@@ -92,8 +92,6 @@ def _ensure_vision_client(
     api_key: Optional[str] = None,
     *,
     base_url: Optional[str] = None,
-    referer: Optional[str] = None,
-    title: Optional[str] = None,
 ) -> OpenAI:
     if OpenAI is None:  # pragma: no cover - optional dependency
         raise RuntimeError(
@@ -115,18 +113,16 @@ def _ensure_vision_client(
         or os.environ.get("OPENAI_BASE_URL")
         or "https://openrouter.ai/api/v1"
     )
-    default_headers = {}
-    referer_header = referer or os.environ.get("OPENROUTER_HTTP_REFERER")
-    title_header = title or os.environ.get("OPENROUTER_APP_TITLE")
-    if referer_header:
-        default_headers["HTTP-Referer"] = referer_header
-    if title_header:
-        default_headers["X-Title"] = title_header
+    
+    # Set HTTP-Referer for OpenRouter (required for their API)
+    default_headers = {
+        "HTTP-Referer": "https://github.com/docling/pdf-ocr-refinement",
+    }
 
     return OpenAI(  # type: ignore[return-value]
         api_key=key,
         base_url=resolved_base_url,
-        default_headers=default_headers or None,
+        default_headers=default_headers,
     )
 
 
@@ -145,7 +141,12 @@ def _should_split_document(pdf_path: Path, max_upload_bytes: int) -> bool:
     return max_upload_bytes > 0 and pdf_path.stat().st_size > max_upload_bytes
 
 
-def _iter_pdf_page_chunks(pdf_path: Path):
+def _prepare_pdf_page_chunks(pdf_path: Path):
+    """
+    Context manager that creates temporary PDF files for each page.
+    Yields a list of (page_index, chunk_path) tuples.
+    The temporary directory is kept alive until the context manager exits.
+    """
     try:
         from pypdf import PdfReader, PdfWriter  # type: ignore[import]
     except ImportError as exc:  # pragma: no cover - optional dependency
@@ -154,16 +155,31 @@ def _iter_pdf_page_chunks(pdf_path: Path):
             "Install it with `pip install pypdf` or increase --max-upload-bytes."
         ) from exc
 
-    with tempfile.TemporaryDirectory() as tmpdir:
-        tmpdir_path = Path(tmpdir)
-        reader = PdfReader(str(pdf_path))
-        for page_index, page in enumerate(reader.pages):
-            writer = PdfWriter()
-            writer.add_page(page)
-            chunk_path = tmpdir_path / f"page-{page_index + 1:04d}.pdf"
-            with chunk_path.open("wb") as handle:
-                writer.write(handle)
-            yield page_index, chunk_path
+    class ChunksContextManager:
+        def __init__(self, pdf_path: Path):
+            self.pdf_path = pdf_path
+            self.tmpdir = None
+            self.chunks = []
+
+        def __enter__(self):
+            self.tmpdir = tempfile.TemporaryDirectory()
+            tmpdir_path = Path(self.tmpdir.__enter__())
+            reader = PdfReader(str(self.pdf_path))
+            for page_index, page in enumerate(reader.pages):
+                writer = PdfWriter()
+                writer.add_page(page)
+                chunk_path = tmpdir_path / f"page-{page_index + 1:04d}.pdf"
+                with chunk_path.open("wb") as handle:
+                    writer.write(handle)
+                self.chunks.append((page_index, chunk_path))
+            return self.chunks
+
+        def __exit__(self, exc_type, exc_val, exc_tb):
+            if self.tmpdir:
+                self.tmpdir.__exit__(exc_type, exc_val, exc_tb)
+            return False
+
+    return ChunksContextManager(pdf_path)
 
 
 def _normalise_page_entry(page: object) -> dict[str, Optional[object]]:
@@ -247,36 +263,6 @@ def _refine_page_with_vision(  # noqa: PLR0912
     output_dir.mkdir(parents=True, exist_ok=True)
     system_prompt = _build_vision_prompt(page_index)
 
-    user_content = [
-        {
-            "type": "text",
-            "text": (
-                "You are provided with a PDF page transcription. "
-                "Compare it with the page image and correct any mistakes."
-            ),
-        }
-    ]
-    if image_b64:
-        user_content.append(
-            {
-                "type": "image_url",
-                "image_url": {
-                    "url": f"data:image/jpeg;base64,{image_b64}",
-                },
-            }
-        )
-    user_content.append(
-        {
-            "type": "text",
-            "text": f"Current Markdown (page {page_index}):\n\n{current_markdown}",
-        }
-    )
-
-    messages: list[dict[str, object]] = [
-        {"role": "system", "content": [{"type": "text", "text": system_prompt}]},
-        {"role": "user", "content": user_content},
-    ]
-
     tools = [
         {
             "type": "function",
@@ -320,6 +306,37 @@ def _refine_page_with_vision(  # noqa: PLR0912
     ]
 
     for round_index in range(1, max_rounds + 1):
+        # Build fresh messages with current markdown for each round
+        LOGGER.debug("Page %d round %d: requesting vision refinement", page_index, round_index)
+        user_content = [
+            {
+                "type": "text",
+                "text": (
+                    "You are provided with a PDF page transcription. "
+                    "Compare it with the page image and correct any mistakes."
+                ),
+            }
+        ]
+        if image_b64:
+            user_content.append(
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": f"data:image/jpeg;base64,{image_b64}",
+                    },
+                }
+            )
+        user_content.append(
+            {
+                "type": "text",
+                "text": f"Current Markdown (page {page_index}):\n\n{current_markdown}",
+            }
+        )
+
+        messages: list[dict[str, object]] = [
+            {"role": "system", "content": [{"type": "text", "text": system_prompt}]},
+            {"role": "user", "content": user_content},
+        ]
         response = None
         for attempt in range(1, max_attempts + 1):
             try:
@@ -327,6 +344,7 @@ def _refine_page_with_vision(  # noqa: PLR0912
                     model=model,
                     messages=messages,
                     tools=tools,
+                    tool_choice="required",  # Force the model to use one of the tools
                     temperature=temperature,
                 )
             except Exception as exc:  # pragma: no cover - defensive
@@ -350,23 +368,6 @@ def _refine_page_with_vision(  # noqa: PLR0912
             raise VisionRefinementError(f"Vision refinement failed for page {page_index} with no response.")
 
         assistant_message = response.choices[0].message
-        assistant_payload = {
-            "role": "assistant",
-            "content": assistant_message.content or "",
-        }
-        if assistant_message.tool_calls:
-            assistant_payload["tool_calls"] = [
-                {
-                    "id": tool_call.id,
-                    "type": tool_call.type,
-                    "function": {
-                        "name": tool_call.function.name,
-                        "arguments": tool_call.function.arguments,
-                    },
-                }
-                for tool_call in assistant_message.tool_calls
-            ]
-        messages.append(assistant_payload)
 
         if not assistant_message.tool_calls:
             LOGGER.warning(
@@ -410,36 +411,11 @@ def _refine_page_with_vision(  # noqa: PLR0912
                 )
 
                 current_markdown = updated_markdown
-                tool_response: dict[str, object] = {
-                    "status": "applied",
-                    "updated_markdown": current_markdown,
-                }
-                if diff_path:
-                    tool_response["diff_path"] = str(diff_path)
-                if diff_text:
-                    tool_response["diff_preview"] = "\n".join(diff_text.splitlines()[:20])
-                notes = arguments.get("notes")
-                if isinstance(notes, str) and notes.strip():
-                    tool_response["notes"] = notes.strip()
-                messages.append(
-                    {
-                        "role": "tool",
-                        "tool_call_id": tool_call.id,
-                        "content": json.dumps(tool_response),
-                    }
-                )
             elif tool_name == "approve_page":
                 LOGGER.debug(
                     "Vision model approved page %d after %d round(s).",
                     page_index,
                     round_index,
-                )
-                messages.append(
-                    {
-                        "role": "tool",
-                        "tool_call_id": tool_call.id,
-                        "content": json.dumps({"status": "approved"}),
-                    }
                 )
                 return current_markdown
             else:
@@ -590,45 +566,46 @@ def pdf_to_markdown_mistral(
             max_upload_bytes,
         )
         chunk_metadata: list[dict[str, object]] = []
-        with ThreadPoolExecutor(max_workers=3) as executor:
-            futures = {
-                executor.submit(
-                    _process_pdf_chunk,
-                    local_page_index=local_page_index,
-                    chunk_path=chunk_path,
-                    client=mistral_client,
-                    include_images=include_images,
-                ): (local_page_index, chunk_path)
-                for local_page_index, chunk_path in _iter_pdf_page_chunks(pdf_path)
-            }
+        with _prepare_pdf_page_chunks(pdf_path) as page_chunks:
+            with ThreadPoolExecutor(max_workers=3) as executor:
+                futures = {
+                    executor.submit(
+                        _process_pdf_chunk,
+                        local_page_index=local_page_index,
+                        chunk_path=chunk_path,
+                        client=mistral_client,
+                        include_images=include_images,
+                    ): (local_page_index, chunk_path)
+                    for local_page_index, chunk_path in page_chunks
+                }
 
-            for future in as_completed(futures):
-                local_page_index, chunk_path = futures[future]
-                try:
-                    _, chunk_response, normalised_pages = future.result()
-                except Exception as exc:  # pragma: no cover - defensive
-                    LOGGER.exception(
-                        "Error processing chunk %s (page %d) for %s: %s",
-                        chunk_path.name,
-                        local_page_index + 1,
-                        pdf_path.name,
-                        exc,
-                    )
-                    continue
+                for future in as_completed(futures):
+                    local_page_index, chunk_path = futures[future]
+                    try:
+                        _, chunk_response, normalised_pages = future.result()
+                    except Exception as exc:  # pragma: no cover - defensive
+                        LOGGER.exception(
+                            "Error processing chunk %s (page %d) for %s: %s",
+                            chunk_path.name,
+                            local_page_index + 1,
+                            pdf_path.name,
+                            exc,
+                        )
+                        continue
 
-                if not normalised_pages:
-                    LOGGER.warning(
-                        "Empty OCR result returned for %s page %d while splitting.",
-                        pdf_path.name,
-                        local_page_index + 1,
+                    if not normalised_pages:
+                        LOGGER.warning(
+                            "Empty OCR result returned for %s page %d while splitting.",
+                            pdf_path.name,
+                            local_page_index + 1,
+                        )
+                    aggregated_pages.extend(normalised_pages)
+                    chunk_metadata.append(
+                        {
+                            "page_number": local_page_index + 1,
+                            "pages": normalised_pages,
+                        }
                     )
-                aggregated_pages.extend(normalised_pages)
-                chunk_metadata.append(
-                    {
-                        "page_number": local_page_index + 1,
-                        "pages": normalised_pages,
-                    }
-                )
         persistence_payload = {
             "mode": "split_per_page",
             "chunks": chunk_metadata,
@@ -651,6 +628,7 @@ def pdf_to_markdown_mistral(
 
         if vision_client and vision_model:
             try:
+                LOGGER.debug("Vision refinement: processing page %d/%d", page_index, len(pages))
                 page_markdown = _refine_page_with_vision(
                     client=vision_client,
                     model=vision_model,
@@ -770,41 +748,8 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--vision-model",
-        default=os.environ.get("VISION_MODEL"),
-        help="Vision model identifier (OpenRouter/OpenAI). Enables the refinement step when provided.",
-    )
-    parser.add_argument(
-        "--vision-base-url",
-        help="Custom base URL for the vision model API. Defaults to OpenRouter.",
-    )
-    parser.add_argument(
-        "--vision-max-rounds",
-        type=int,
-        default=int(os.environ.get("VISION_MAX_ROUNDS", "3")),
-        help="Maximum refinement rounds per page (default: 3).",
-    )
-    parser.add_argument(
-        "--vision-temperature",
-        type=float,
-        default=float(os.environ.get("VISION_TEMPERATURE", "0.0")),
-        help="Sampling temperature for the vision refinement model (default: 0.0).",
-    )
-    parser.add_argument(
-        "--vision-max-attempts",
-        type=int,
-        default=int(os.environ.get("VISION_MAX_ATTEMPTS", "3")),
-        help="Maximum API retry attempts per vision call before aborting (default: 3).",
-    )
-    parser.add_argument(
-        "--vision-retry-delay",
-        type=float,
-        default=float(os.environ.get("VISION_RETRY_DELAY", "2.0")),
-        help="Base delay (seconds) for exponential backoff between vision retries (default: 2.0).",
-    )
-    parser.add_argument(
-        "--skip-vision-refine",
-        action="store_true",
-        help="Disable the vision-based refinement step.",
+        default=VISION_LLM,
+        help=f"Vision model identifier (OpenRouter/OpenAI). Enables the refinement step when provided (default: {VISION_LLM}).",
     )
     parser.add_argument(
         "--max-upload-bytes",
@@ -840,19 +785,19 @@ def main() -> int:
         return 1
 
     vision_client = None
-    vision_model = None if args.skip_vision_refine else args.vision_model
+    vision_model = args.vision_model
     if vision_model:
         try:
-            vision_client = _ensure_vision_client(
-                base_url=args.vision_base_url,
-            )
+            vision_client = _ensure_vision_client()
         except RuntimeError as exc:
             LOGGER.error("Failed to initialise vision refinement client: %s", exc)
             return 1
 
-    vision_max_rounds = max(1, args.vision_max_rounds)
-    vision_max_attempts = max(1, args.vision_max_attempts)
-    vision_retry_delay = max(0.0, args.vision_retry_delay)
+    # Use hardcoded defaults for vision refinement parameters
+    vision_max_rounds = 3
+    vision_max_attempts = 3
+    vision_retry_delay = 2.0
+    vision_temperature = 0.1
 
     successes = 0
     LOGGER.info("Found %d PDF(s) to process.", len(pdfs))
@@ -869,7 +814,7 @@ def main() -> int:
                 vision_client=vision_client,
                 vision_model=vision_model,
                 vision_max_rounds=vision_max_rounds,
-                vision_temperature=args.vision_temperature,
+                vision_temperature=vision_temperature,
                 vision_max_attempts=vision_max_attempts,
                 vision_retry_base_delay=vision_retry_delay,
                 max_upload_bytes=args.max_upload_bytes,
