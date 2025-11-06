@@ -232,65 +232,87 @@ def _is_retryable_vision_error(exc: Exception) -> bool:
     return False
 
 
-def _build_vision_prompt(page_number: int) -> str:
+def _build_vision_prompt(page_numbers: Sequence[int]) -> str:
+    if not page_numbers:
+        page_label = "the provided page(s)"
+    elif len(page_numbers) == 1:
+        page_label = f"page {page_numbers[0]}"
+    else:
+        joined = ", ".join(str(number) for number in page_numbers)
+        page_label = f"pages {joined}"
+
     return (
         "You are a meticulous layout-aware editor. "
-        "Review the provided PDF page image and its current Markdown transcription. "
+        "Review the provided PDF page images and their current Markdown transcriptions. "
         "Fix OCR mistakes, preserve structure, and capture tables, lists, and headings faithfully. "
-        "Use the available tools: call `apply_page_edits` to submit improved Markdown when changes "
-        "are needed or `approve_page` when the transcription is correct. "
-        f"Always aim for the cleanest Markdown for page {page_number}."
+        "Use the available tools: call `apply_page_group_edits` to submit improved Markdown when changes "
+        "are needed or `approve_page_group` when the transcriptions are correct. "
+        f"Give special attention to content that spans across {page_label}."
     )
 
 
-def _refine_page_with_vision(  # noqa: PLR0912
+def _refine_page_group_with_vision(  # noqa: PLR0912
     *,
     client: OpenAI,
     model: str,
-    page_index: int,
-    original_markdown: str,
-    image_b64: Optional[str],
+    page_numbers: Sequence[int],
+    original_markdowns: Sequence[str],
+    images_b64: Sequence[Optional[str]],
     output_dir: Path,
     max_rounds: int,
     temperature: float,
     max_attempts: int,
     retry_base_delay: float,
-) -> str:
-    current_markdown = original_markdown
-    if not current_markdown.strip():
-        return current_markdown
+) -> list[str]:
+    if not original_markdowns:
+        return []
 
+    current_markdowns = list(original_markdowns)
     output_dir.mkdir(parents=True, exist_ok=True)
-    system_prompt = _build_vision_prompt(page_index)
+    system_prompt = _build_vision_prompt(page_numbers)
 
     tools = [
         {
             "type": "function",
             "function": {
-                "name": "apply_page_edits",
+                "name": "apply_page_group_edits",
                 "description": (
-                    "Submit revised Markdown for the current page when changes are required."
+                    "Submit revised Markdown for one or more pages in the current group when changes are required."
                 ),
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "updated_markdown": {
-                            "type": "string",
-                            "description": "The fully updated Markdown representation for the page.",
-                        },
-                        "notes": {
-                            "type": "string",
-                            "description": "Brief summary of the applied fixes.",
+                        "updated_pages": {
+                            "type": "array",
+                            "description": "List of per-page Markdown updates.",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "page_number": {
+                                        "type": "integer",
+                                        "description": "The page number being updated.",
+                                    },
+                                    "updated_markdown": {
+                                        "type": "string",
+                                        "description": "The fully updated Markdown representation for the page.",
+                                    },
+                                    "notes": {
+                                        "type": "string",
+                                        "description": "Brief summary of the applied fixes.",
+                                    },
+                                },
+                                "required": ["page_number", "updated_markdown"],
+                            },
                         },
                     },
-                    "required": ["updated_markdown"],
+                    "required": ["updated_pages"],
                 },
             },
         },
         {
             "type": "function",
             "function": {
-                "name": "approve_page",
+                "name": "approve_page_group",
                 "description": "Call when the Markdown accurately reflects the page content.",
                 "parameters": {
                     "type": "object",
@@ -306,32 +328,40 @@ def _refine_page_with_vision(  # noqa: PLR0912
     ]
 
     for round_index in range(1, max_rounds + 1):
-        # Build fresh messages with current markdown for each round
-        LOGGER.debug("Page %d round %d: requesting vision refinement", page_index, round_index)
+        if not any(markdown.strip() for markdown in current_markdowns):
+            return current_markdowns
+
+        page_label = ", ".join(str(number) for number in page_numbers)
+        LOGGER.debug("Pages %s round %d: requesting vision refinement", page_label, round_index)
         user_content = [
             {
                 "type": "text",
                 "text": (
-                    "You are provided with a PDF page transcription. "
-                    "Compare it with the page image and correct any mistakes."
+                    "You are provided with one or two consecutive PDF page transcriptions. "
+                    "Compare them with the corresponding page images and correct any mistakes, "
+                    "keeping tables and sentences continuous when they span both pages."
                 ),
             }
         ]
-        if image_b64:
+
+        for idx, page_number in enumerate(page_numbers):
+            image_b64 = images_b64[idx] if idx < len(images_b64) else None
+            if image_b64:
+                user_content.append(
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:image/jpeg;base64,{image_b64}",
+                        },
+                    }
+                )
+            current_markdown = current_markdowns[idx] if idx < len(current_markdowns) else ""
             user_content.append(
                 {
-                    "type": "image_url",
-                    "image_url": {
-                        "url": f"data:image/jpeg;base64,{image_b64}",
-                    },
+                    "type": "text",
+                    "text": f"Current Markdown (page {page_number}):\n\n{current_markdown}",
                 }
             )
-        user_content.append(
-            {
-                "type": "text",
-                "text": f"Current Markdown (page {page_index}):\n\n{current_markdown}",
-            }
-        )
 
         messages: list[dict[str, object]] = [
             {"role": "system", "content": [{"type": "text", "text": system_prompt}]},
@@ -344,19 +374,19 @@ def _refine_page_with_vision(  # noqa: PLR0912
                     model=model,
                     messages=messages,
                     tools=tools,
-                    tool_choice="required",  # Force the model to use one of the tools
+                    tool_choice="required",
                     temperature=temperature,
                 )
             except Exception as exc:  # pragma: no cover - defensive
                 if not _is_retryable_vision_error(exc) or attempt >= max_attempts:
                     raise VisionRefinementError(
-                        f"Vision refinement failed after {attempt} attempt(s) for page {page_index}."
+                        f"Vision refinement failed after {attempt} attempt(s) for pages {page_label}."
                     ) from exc
                 wait = max(retry_base_delay, 0.0) * attempt
                 LOGGER.warning(
-                    "Vision refinement request failed (%s) for page %d. Retrying in %.1f seconds (%d/%d).",
+                    "Vision refinement request failed (%s) for pages %s. Retrying in %.1f seconds (%d/%d).",
                     exc.__class__.__name__,
-                    page_index,
+                    page_label,
                     wait,
                     attempt,
                     max_attempts,
@@ -365,14 +395,14 @@ def _refine_page_with_vision(  # noqa: PLR0912
             else:
                 break
         if response is None:  # pragma: no cover - defensive
-            raise VisionRefinementError(f"Vision refinement failed for page {page_index} with no response.")
+            raise VisionRefinementError(f"Vision refinement failed for pages {page_label} with no response.")
 
         assistant_message = response.choices[0].message
 
         if not assistant_message.tool_calls:
             LOGGER.warning(
-                "Vision model response for page %d did not invoke a tool; skipping further refinement.",
-                page_index,
+                "Vision model response for pages %s did not invoke a tool; skipping further refinement.",
+                page_label,
             )
             break
 
@@ -382,51 +412,73 @@ def _refine_page_with_vision(  # noqa: PLR0912
                 arguments = json.loads(tool_call.function.arguments or "{}")
             except json.JSONDecodeError:
                 LOGGER.warning(
-                    "Unable to decode arguments for tool call %s on page %d.",
+                    "Unable to decode arguments for tool call %s on pages %s.",
                     tool_name,
-                    page_index,
+                    page_label,
                 )
                 continue
 
-            if tool_name == "apply_page_edits":
-                updated_markdown = arguments.get("updated_markdown")
-                if not isinstance(updated_markdown, str):
+            if tool_name == "apply_page_group_edits":
+                updated_pages = arguments.get("updated_pages")
+                if not isinstance(updated_pages, list):
                     LOGGER.warning(
-                        "Vision model returned invalid updated_markdown for page %d.",
-                        page_index,
+                        "Vision model returned invalid updated_pages payload for pages %s.",
+                        page_label,
                     )
                     continue
 
-                diff_text = _render_unified_diff(current_markdown, updated_markdown)
-                diff_path = None
-                if diff_text:
-                    diff_path = output_dir / f"page-{page_index:04d}-round-{round_index}.diff"
-                    diff_path.write_text(diff_text, encoding="utf-8")
+                number_to_index = {number: idx for idx, number in enumerate(page_numbers)}
+                for entry in updated_pages:
+                    if not isinstance(entry, dict):
+                        continue
+                    page_number = entry.get("page_number")
+                    updated_markdown = entry.get("updated_markdown")
+                    if not isinstance(page_number, int) or not isinstance(updated_markdown, str):
+                        LOGGER.warning(
+                            "Vision model returned invalid update entry for pages %s.",
+                            page_label,
+                        )
+                        continue
+                    target_idx = number_to_index.get(page_number)
+                    if target_idx is None:
+                        LOGGER.warning(
+                            "Vision model referenced unknown page number %s (pages %s).",
+                            page_number,
+                            page_label,
+                        )
+                        continue
+                    previous_markdown = current_markdowns[target_idx]
+                    diff_text = _render_unified_diff(previous_markdown, updated_markdown)
+                    diff_path = None
+                    if diff_text:
+                        diff_path = (
+                            output_dir / f"page-{page_number:04d}-round-{round_index}.diff"
+                        )
+                        diff_path.write_text(diff_text, encoding="utf-8")
+                    LOGGER.debug(
+                        "Applied vision refinement round %d for page %d. Diff saved to %s",
+                        round_index,
+                        page_number,
+                        diff_path or "N/A",
+                    )
+                    current_markdowns[target_idx] = updated_markdown
 
+            elif tool_name == "approve_page_group":
                 LOGGER.debug(
-                    "Applied vision refinement round %d for page %d. Diff saved to %s",
-                    round_index,
-                    page_index,
-                    diff_path or "N/A",
-                )
-
-                current_markdown = updated_markdown
-            elif tool_name == "approve_page":
-                LOGGER.debug(
-                    "Vision model approved page %d after %d round(s).",
-                    page_index,
+                    "Vision model approved pages %s after %d round(s).",
+                    page_label,
                     round_index,
                 )
-                return current_markdown
+                return current_markdowns
             else:
-                LOGGER.debug("Unhandled tool %s for page %d.", tool_name, page_index)
+                LOGGER.debug("Unhandled tool %s for pages %s.", tool_name, page_label)
 
     LOGGER.info(
-        "Vision refinement reached max rounds (%d) for page %d without explicit approval.",
+        "Vision refinement reached max rounds (%d) for pages %s without explicit approval.",
         max_rounds,
-        page_index,
+        ", ".join(str(number) for number in page_numbers),
     )
-    return current_markdown
+    return current_markdowns
 
 
 def _is_retryable_ocr_error(exc: Exception) -> bool:
@@ -506,6 +558,73 @@ def _process_pdf_chunk(
         chunk_pages = chunk_response.get("pages", [])
     normalised_pages = [_normalise_page_entry(page) for page in chunk_pages]
     return local_page_index, chunk_response, normalised_pages
+
+
+def _apply_pairwise_vision_refinement(
+    pages: Sequence[dict[str, Optional[object]]],
+    *,
+    client: OpenAI,
+    model: str,
+    output_dir: Path,
+    max_rounds: int,
+    temperature: float,
+    max_attempts: int,
+    retry_base_delay: float,
+) -> None:
+    if not pages:
+        return
+
+    batch: list[tuple[int, dict[str, Optional[object]]]] = []
+    total_pages = len(pages)
+    for idx, page in enumerate(pages):
+        page_number = idx + 1
+        batch.append((page_number, page))
+        is_last = idx == total_pages - 1
+        if len(batch) < 2 and not is_last:
+            continue
+
+        page_numbers = [entry[0] for entry in batch]
+        original_markdowns = [
+            (_extract_attr(entry[1], "markdown", "") or "") for entry in batch
+        ]
+        images_b64 = [_extract_attr(entry[1], "image_base64") for entry in batch]
+        if not any(markdown.strip() for markdown in original_markdowns):
+            batch.clear()
+            continue
+
+        updated_markdowns = _refine_page_group_with_vision(
+            client=client,
+            model=model,
+            page_numbers=page_numbers,
+            original_markdowns=original_markdowns,
+            images_b64=images_b64,
+            output_dir=output_dir,
+            max_rounds=max_rounds,
+            temperature=temperature,
+            max_attempts=max_attempts,
+            retry_base_delay=retry_base_delay,
+        )
+
+        if len(updated_markdowns) != len(batch):
+            LOGGER.warning(
+                "Vision refinement returned %d page(s) for group %s; expected %d.",
+                len(updated_markdowns),
+                page_numbers,
+                len(batch),
+            )
+
+        for (page_number, page_entry), updated_markdown in zip(batch, updated_markdowns):
+            if isinstance(page_entry, dict):
+                page_entry["markdown"] = updated_markdown
+            else:  # pragma: no cover - fallback for unexpected objects
+                try:
+                    setattr(page_entry, "markdown", updated_markdown)
+                except Exception:  # pragma: no cover - defensive
+                    LOGGER.debug(
+                        "Unable to assign updated markdown for page %d (non-dict entry).",
+                        page_number,
+                    )
+        batch.clear()
 
 
 def pdf_to_markdown_mistral(
@@ -616,6 +735,22 @@ def pdf_to_markdown_mistral(
     markdown_chunks: list[str] = []
     vision_diff_dir = document_dir / "vision_diffs"
 
+    if vision_client and vision_model:
+        try:
+            _apply_pairwise_vision_refinement(
+                pages,
+                client=vision_client,
+                model=vision_model,
+                output_dir=vision_diff_dir,
+                max_rounds=vision_max_rounds,
+                temperature=vision_temperature,
+                max_attempts=vision_max_attempts,
+                retry_base_delay=vision_retry_base_delay,
+            )
+        except Exception as exc:  # pragma: no cover - defensive
+            LOGGER.exception("Vision refinement failed for %s: %s", pdf_path.name, exc)
+            raise
+
     for idx, page in enumerate(pages):
         page_markdown = _extract_attr(page, "markdown", "") or ""
         if not page_markdown.strip():
@@ -625,28 +760,6 @@ def pdf_to_markdown_mistral(
         image_b64 = None
         if include_images:
             image_b64 = _extract_attr(page, "image_base64")
-
-        if vision_client and vision_model:
-            try:
-                LOGGER.debug("Vision refinement: processing page %d/%d", page_index, len(pages))
-                page_markdown = _refine_page_with_vision(
-                    client=vision_client,
-                    model=vision_model,
-                    page_index=page_index,
-                    original_markdown=page_markdown,
-                    image_b64=image_b64,
-                    output_dir=vision_diff_dir,
-                    max_rounds=vision_max_rounds,
-                    temperature=vision_temperature,
-                    max_attempts=vision_max_attempts,
-                    retry_base_delay=vision_retry_base_delay,
-                )
-            except Exception as exc:  # pragma: no cover - defensive
-                LOGGER.exception("Vision refinement failed for %s page %d: %s", pdf_path.name, page_index, exc)
-                raise
-
-        if isinstance(page, dict):
-            page["markdown"] = page_markdown
 
         markdown_chunks.append(page_markdown)
 
