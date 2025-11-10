@@ -42,9 +42,6 @@ except ModuleNotFoundError:  # pragma: no cover
 
 LOGGER = logging.getLogger(__name__)
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-load_dotenv(PROJECT_ROOT / ".env")
-
 # Default vision model for page refinement
 VISION_LLM = "anthropic/claude-haiku-4.5"
 
@@ -53,7 +50,9 @@ class VisionRefinementError(RuntimeError):
     """Raised when the vision refinement step fails and should abort the pipeline."""
 
 
-def _extract_attr(entry: object, name: str, default: Optional[object] = None) -> Optional[object]:
+def _extract_attr(
+    entry: object, name: str, default: Optional[object] = None
+) -> Optional[object]:
     if isinstance(entry, dict):
         return entry.get(name, default)
     return getattr(entry, name, default)
@@ -109,11 +108,9 @@ def _ensure_vision_client(
         )
 
     resolved_base_url = (
-        base_url
-        or os.environ.get("OPENAI_BASE_URL")
-        or "https://openrouter.ai/api/v1"
+        base_url or os.environ.get("OPENAI_BASE_URL") or "https://openrouter.ai/api/v1"
     )
-    
+
     # Set HTTP-Referer for OpenRouter (required for their API)
     default_headers = {
         "HTTP-Referer": "https://github.com/docling/pdf-ocr-refinement",
@@ -332,7 +329,9 @@ def _refine_page_group_with_vision(  # noqa: PLR0912
             return current_markdowns
 
         page_label = ", ".join(str(number) for number in page_numbers)
-        LOGGER.debug("Pages %s round %d: requesting vision refinement", page_label, round_index)
+        LOGGER.debug(
+            "Pages %s round %d: requesting vision refinement", page_label, round_index
+        )
         user_content = [
             {
                 "type": "text",
@@ -355,7 +354,9 @@ def _refine_page_group_with_vision(  # noqa: PLR0912
                         },
                     }
                 )
-            current_markdown = current_markdowns[idx] if idx < len(current_markdowns) else ""
+            current_markdown = (
+                current_markdowns[idx] if idx < len(current_markdowns) else ""
+            )
             user_content.append(
                 {
                     "type": "text",
@@ -395,7 +396,9 @@ def _refine_page_group_with_vision(  # noqa: PLR0912
             else:
                 break
         if response is None:  # pragma: no cover - defensive
-            raise VisionRefinementError(f"Vision refinement failed for pages {page_label} with no response.")
+            raise VisionRefinementError(
+                f"Vision refinement failed for pages {page_label} with no response."
+            )
 
         assistant_message = response.choices[0].message
 
@@ -427,13 +430,17 @@ def _refine_page_group_with_vision(  # noqa: PLR0912
                     )
                     continue
 
-                number_to_index = {number: idx for idx, number in enumerate(page_numbers)}
+                number_to_index = {
+                    number: idx for idx, number in enumerate(page_numbers)
+                }
                 for entry in updated_pages:
                     if not isinstance(entry, dict):
                         continue
                     page_number = entry.get("page_number")
                     updated_markdown = entry.get("updated_markdown")
-                    if not isinstance(page_number, int) or not isinstance(updated_markdown, str):
+                    if not isinstance(page_number, int) or not isinstance(
+                        updated_markdown, str
+                    ):
                         LOGGER.warning(
                             "Vision model returned invalid update entry for pages %s.",
                             page_label,
@@ -448,11 +455,14 @@ def _refine_page_group_with_vision(  # noqa: PLR0912
                         )
                         continue
                     previous_markdown = current_markdowns[target_idx]
-                    diff_text = _render_unified_diff(previous_markdown, updated_markdown)
+                    diff_text = _render_unified_diff(
+                        previous_markdown, updated_markdown
+                    )
                     diff_path = None
                     if diff_text:
                         diff_path = (
-                            output_dir / f"page-{page_number:04d}-round-{round_index}.diff"
+                            output_dir
+                            / f"page-{page_number:04d}-round-{round_index}.diff"
                         )
                         diff_path.write_text(diff_text, encoding="utf-8")
                     LOGGER.debug(
@@ -613,7 +623,9 @@ def _apply_pairwise_vision_refinement(
                 len(batch),
             )
 
-        for (page_number, page_entry), updated_markdown in zip(batch, updated_markdowns):
+        for (page_number, page_entry), updated_markdown in zip(
+            batch, updated_markdowns
+        ):
             if isinstance(page_entry, dict):
                 page_entry["markdown"] = updated_markdown
             else:  # pragma: no cover - fallback for unexpected objects
@@ -754,7 +766,9 @@ def pdf_to_markdown_mistral(
     for idx, page in enumerate(pages):
         page_markdown = _extract_attr(page, "markdown", "") or ""
         if not page_markdown.strip():
-            LOGGER.warning("Empty markdown returned for %s page %d", pdf_path.name, idx + 1)
+            LOGGER.warning(
+                "Empty markdown returned for %s page %d", pdf_path.name, idx + 1
+            )
         page_index = idx + 1
 
         image_b64 = None
@@ -783,7 +797,9 @@ def pdf_to_markdown_mistral(
         image_path = images_dir / f"page-{file_index:04d}.jpeg"
         image_path.write_bytes(image_bytes)
 
-    final_markdown = "\n\n---\n\n".join(chunk.strip() for chunk in markdown_chunks).strip()
+    final_markdown = "\n\n---\n\n".join(
+        chunk.strip() for chunk in markdown_chunks
+    ).strip()
     final_markdown = normalize_toc_markdown(final_markdown) if final_markdown else ""
 
     markdown_path = document_dir / "combined_markdown.md"
@@ -796,7 +812,9 @@ def pdf_to_markdown_mistral(
     return markdown_path
 
 
-def _resolve_inputs(input_path: Path, pattern: str, excluded_dirs: Iterable[str]) -> list[Path]:
+def _resolve_inputs(
+    input_path: Path, pattern: str, excluded_dirs: Iterable[str]
+) -> list[Path]:
     excluded = {entry.lower() for entry in excluded_dirs}
     if input_path.is_file():
         return [input_path]
@@ -816,66 +834,7 @@ def _resolve_inputs(input_path: Path, pattern: str, excluded_dirs: Iterable[str]
     return pdfs
 
 
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Convert PDFs to Markdown using Mistral OCR.",
-    )
-    parser.add_argument(
-        "input",
-        help="Path to a PDF file or a directory containing PDFs.",
-    )
-    parser.add_argument(
-        "--output-dir",
-        default=str(Path("output") / "mistral_OCR"),
-        help="Directory where conversion artefacts will be written.",
-    )
-    parser.add_argument(
-        "--pattern",
-        default="*.pdf",
-        help="Glob pattern to select PDFs when input is a directory.",
-    )
-    parser.add_argument(
-        "--exclude-subdir",
-        action="append",
-        default=["old"],
-        help="Directory name to skip when discovering PDFs (can be used multiple times).",
-    )
-    parser.add_argument(
-        "--api-key",
-        help="Mistral API key. Defaults to the MISTRAL_API_KEY environment variable.",
-    )
-    parser.add_argument(
-        "--no-images",
-        action="store_true",
-        help="Skip saving page images returned by the OCR service.",
-    )
-    parser.add_argument(
-        "--save-response",
-        action="store_true",
-        help="Persist the raw OCR response JSON alongside the Markdown output.",
-    )
-    parser.add_argument(
-        "--verbose",
-        action="store_true",
-        help="Enable verbose logging.",
-    )
-    parser.add_argument(
-        "--vision-model",
-        default=VISION_LLM,
-        help=f"Vision model identifier (OpenRouter/OpenAI). Enables the refinement step when provided (default: {VISION_LLM}).",
-    )
-    parser.add_argument(
-        "--max-upload-bytes",
-        type=int,
-        default=int(os.environ.get("MAX_UPLOAD_BYTES", str(10 * 1024 * 1024))),
-        help="Maximum PDF size (bytes) to send in a single OCR request before splitting per page (default: 10485760). "
-             "Smaller values reduce per-request payload and enable parallel processing (up to 3 requests).",
-    )
-    return parser.parse_args()
-
-
-def main() -> int:
-    args = parse_args()
+def main(args: argparse.Namespace) -> int:
     setup_logging(args.verbose)
 
     input_path = Path(args.input).expanduser()
@@ -942,4 +901,63 @@ def main() -> int:
 
 
 if __name__ == "__main__":  # pragma: no cover
-    raise SystemExit(main())
+    # Load environment variables first
+    PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+    load_dotenv(PROJECT_ROOT / ".env")
+
+    parser = argparse.ArgumentParser(
+        description="Convert PDFs to Markdown using Mistral OCR.",
+    )
+    parser.add_argument(
+        "input",
+        help="Path to a PDF file or a directory containing PDFs.",
+    )
+    parser.add_argument(
+        "--output-dir",
+        default=str(Path("output") / "mistral_OCR"),
+        help="Directory where conversion artefacts will be written.",
+    )
+    parser.add_argument(
+        "--pattern",
+        default="*.pdf",
+        help="Glob pattern to select PDFs when input is a directory.",
+    )
+    parser.add_argument(
+        "--exclude-subdir",
+        action="append",
+        default=["old"],
+        help="Directory name to skip when discovering PDFs (can be used multiple times).",
+    )
+    parser.add_argument(
+        "--api-key",
+        help="Mistral API key. Defaults to the MISTRAL_API_KEY environment variable.",
+    )
+    parser.add_argument(
+        "--no-images",
+        action="store_true",
+        help="Skip saving page images returned by the OCR service.",
+    )
+    parser.add_argument(
+        "--save-response",
+        action="store_true",
+        help="Persist the raw OCR response JSON alongside the Markdown output.",
+    )
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Enable verbose logging.",
+    )
+    parser.add_argument(
+        "--vision-model",
+        default=VISION_LLM,
+        help=f"Vision model identifier (OpenRouter/OpenAI). Enables the refinement step when provided (default: {VISION_LLM}).",
+    )
+    parser.add_argument(
+        "--max-upload-bytes",
+        type=int,
+        default=int(os.environ.get("MAX_UPLOAD_BYTES", str(10 * 1024 * 1024))),
+        help="Maximum PDF size (bytes) to send in a single OCR request before splitting per page (default: 10485760). "
+        "Smaller values reduce per-request payload and enable parallel processing (up to 3 requests).",
+    )
+    args = parser.parse_args()
+    raise SystemExit(main(args))

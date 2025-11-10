@@ -20,7 +20,6 @@ from docling.datamodel.base_models import (
     ConversionStatus,
     ConfidenceReport,
     InputFormat,
-
 )
 from docling_core.types.doc.document import (
     DoclingDocument,
@@ -146,7 +145,7 @@ def process_pdf(
 
     # Get total pages in the PDF
     try:
-        with open(pdf_path, 'rb') as f:
+        with open(pdf_path, "rb") as f:
             pdf_reader = PdfReader(f)
             total_pages = len(pdf_reader.pages)
     except Exception as exc:
@@ -156,7 +155,12 @@ def process_pdf(
     if max_pages is not None:
         total_pages = min(total_pages, max_pages)
 
-    logging.info("Processing %s with %d pages in chunks of %d", pdf_path.name, total_pages, chunk_size)
+    logging.info(
+        "Processing %s with %d pages in chunks of %d",
+        pdf_path.name,
+        total_pages,
+        chunk_size,
+    )
 
     # Process PDF in chunks
     all_docs = []
@@ -166,17 +170,30 @@ def process_pdf(
 
     for start_page in range(1, total_pages + 1, chunk_size):
         end_page = min(start_page + chunk_size - 1, total_pages)
-        logging.info("Processing pages %d-%d of %s", start_page, end_page, pdf_path.name)
+        logging.info(
+            "Processing pages %d-%d of %s", start_page, end_page, pdf_path.name
+        )
 
         convert_kwargs = {"page_range": (start_page, end_page)}
 
         try:
             conversion_result = converter.convert(pdf_path, **convert_kwargs)
         except ConversionError as exc:
-            logging.error("Failed to convert pages %d-%d of %s: %s", start_page, end_page, pdf_path.name, exc)
+            logging.error(
+                "Failed to convert pages %d-%d of %s: %s",
+                start_page,
+                end_page,
+                pdf_path.name,
+                exc,
+            )
             continue
         except Exception as exc:  # pragma: no cover - defensive
-            logging.exception("Unexpected failure while converting pages %d-%d of %s", start_page, end_page, pdf_path.name)
+            logging.exception(
+                "Unexpected failure while converting pages %d-%d of %s",
+                start_page,
+                end_page,
+                pdf_path.name,
+            )
             continue
 
         # Process this chunk
@@ -198,7 +215,9 @@ def process_pdf(
     try:
         combined_doc = combine_documents(all_docs)
     except Exception as exc:
-        logging.error("Failed to combine document chunks for %s: %s", pdf_path.name, exc)
+        logging.error(
+            "Failed to combine document chunks for %s: %s", pdf_path.name, exc
+        )
         # Fallback: use the first chunk
         combined_doc = all_docs[0]
 
@@ -211,13 +230,21 @@ def process_pdf(
 
     # Create combined metadata (using the last conversion result for status/confidence)
     metadata = serialize_metadata(
-        conversion_result.status if 'conversion_result' in locals() else ConversionStatus.SUCCESS,
+        (
+            conversion_result.status
+            if "conversion_result" in locals()
+            else ConversionStatus.SUCCESS
+        ),
         combined_doc,
         pdf_path,
         markdown_path,
         (combined_tables_exported, combined_tables_failed),
         combined_pictures_removed,
-        conversion_result.confidence if 'conversion_result' in locals() else ConfidenceReport(),
+        (
+            conversion_result.confidence
+            if "conversion_result" in locals()
+            else ConfidenceReport()
+        ),
     )
     (doc_output_dir / "metadata.json").write_text(
         json.dumps(metadata, indent=2), encoding="utf-8"
@@ -227,7 +254,7 @@ def process_pdf(
         "Converted %s -> %s (%d pages processed in chunks)",
         pdf_path.name,
         markdown_path.relative_to(output_root),
-        total_pages
+        total_pages,
     )
     return doc_output_dir
 
@@ -286,12 +313,16 @@ def main() -> int:
 
     pdf_files = list(iter_pdfs(input_dir, args.pattern))
     if not pdf_files:
-        logging.warning("No PDF files found in %s with pattern %s", input_dir, args.pattern)
+        logging.warning(
+            "No PDF files found in %s with pattern %s", input_dir, args.pattern
+        )
         return 1
 
     successes = 0
     for pdf_path in pdf_files:
-        if process_pdf(converter, pdf_path, output_dir, args.max_pages, args.chunk_size):
+        if process_pdf(
+            converter, pdf_path, output_dir, args.max_pages, args.chunk_size
+        ):
             successes += 1
 
     logging.info("Completed %s/%s conversions.", successes, len(pdf_files))

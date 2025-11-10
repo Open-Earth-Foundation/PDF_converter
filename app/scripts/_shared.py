@@ -46,32 +46,34 @@ def is_table_of_contents(table_item: TableItem) -> bool:
 
         # Common TOC indicators
         toc_indicators = [
-            'table of contents',
-            'contents',
-            'chapter',
-            'section',
-            'page',
-            'introduction',
-            'summary',
-            'conclusion',
-            'appendix'
+            "table of contents",
+            "contents",
+            "chapter",
+            "section",
+            "page",
+            "introduction",
+            "summary",
+            "conclusion",
+            "appendix",
         ]
 
         # Check if any TOC indicators are present
-        has_toc_indicators = any(indicator in text_content for indicator in toc_indicators)
+        has_toc_indicators = any(
+            indicator in text_content for indicator in toc_indicators
+        )
 
         # Check for repetitive content across columns (common in malformed TOC detection)
         if len(df.columns) >= 3:
             # Check if columns have very similar content
             column_texts = []
             for col in df.columns[:3]:  # Check first 3 columns
-                col_text = ' '.join(df[col].astype(str).map(_normalized_text))
+                col_text = " ".join(df[col].astype(str).map(_normalized_text))
                 column_texts.append(col_text)
 
             # Check for high similarity between columns
             repetitive_content = False
             for i in range(len(column_texts)):
-                for j in range(i+1, len(column_texts)):
+                for j in range(i + 1, len(column_texts)):
                     # Simple similarity check - if columns share many common words
                     words_i = set(column_texts[i].split())
                     words_j = set(column_texts[j].split())
@@ -89,12 +91,14 @@ def is_table_of_contents(table_item: TableItem) -> bool:
                 return True
 
         # Check for page number patterns (digits at end of rows)
-        page_pattern = re.compile(r'\s+\d+\s*$', re.MULTILINE)
+        page_pattern = re.compile(r"\s+\d+\s*$", re.MULTILINE)
         page_matches = page_pattern.findall(text_content)
         has_page_numbers = len(page_matches) > 3  # Multiple page numbers suggest TOC
 
         # Check for section numbering patterns (1., 1.1, A., etc.)
-        section_pattern = re.compile(r'\b\d+\.|\b[A-Z]\.|Module\s+[A-Z]-\d+', re.IGNORECASE)
+        section_pattern = re.compile(
+            r"\b\d+\.|\b[A-Z]\.|Module\s+[A-Z]-\d+", re.IGNORECASE
+        )
         section_matches = section_pattern.findall(text_content)
         has_section_numbers = len(section_matches) > 2
 
@@ -230,7 +234,9 @@ def export_tables(doc: DoclingDocument, target_root: Path) -> Tuple[int, int]:
 
         # Skip tables that are likely table of contents or similar non-tabular content
         if is_table_of_contents(node):
-            logging.info("Skipping table that appears to be a table of contents or similar structure")
+            logging.info(
+                "Skipping table that appears to be a table of contents or similar structure"
+            )
             continue
 
         if tables_dir is None:
@@ -241,9 +247,7 @@ def export_tables(doc: DoclingDocument, target_root: Path) -> Tuple[int, int]:
         markdown_path = tables_dir / f"{table_slug}.md"
         csv_path = tables_dir / f"{table_slug}.csv"
 
-        markdown_path.write_text(
-            node.export_to_markdown(), encoding="utf-8"
-        )
+        markdown_path.write_text(node.export_to_markdown(), encoding="utf-8")
 
         try:
             dataframe = node.export_to_dataframe()

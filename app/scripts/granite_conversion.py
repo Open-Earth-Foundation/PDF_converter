@@ -20,12 +20,11 @@ from docling.document_converter import DocumentConverter, PdfFormatOption
 from docling.datamodel.base_models import (
     ConversionStatus,
     InputFormat,
-    ConfidenceReport
+    ConfidenceReport,
 )
 from docling_core.types.doc.document import (
     DoclingDocument,
     PictureItem,
-
 )
 from docling.datamodel.pipeline_options import (
     PdfPipelineOptions,
@@ -55,7 +54,9 @@ except ModuleNotFoundError:  # pragma: no cover
 def build_converter() -> DocumentConverter:
     """Configure Docling to enrich images with Granite descriptions."""
     print("Ensuring artifacts directory...")
-    artifacts_dir = ensure_artifacts_dir(include_granite=False)  # Temporarily disable granite
+    artifacts_dir = ensure_artifacts_dir(
+        include_granite=False
+    )  # Temporarily disable granite
     print(f"Artifacts dir: {artifacts_dir}")
     print("Creating PDF options...")
     pdf_options = PdfPipelineOptions(
@@ -185,7 +186,9 @@ def process_pdf(
         logging.exception("Unexpected failure while converting %s", pdf_path.name)
         return None
 
-    image_doc = doc_with_image_refs(conversion_result.document, markdown_path, images_dir)
+    image_doc = doc_with_image_refs(
+        conversion_result.document, markdown_path, images_dir
+    )
     tables_info = export_tables(image_doc, doc_output_dir)
 
     markdown_text = image_doc.export_to_markdown(
@@ -196,7 +199,9 @@ def process_pdf(
         encoding="utf-8",
     )
 
-    total_pictures, described_pictures, picture_entries = extract_picture_metadata(image_doc)
+    total_pictures, described_pictures, picture_entries = extract_picture_metadata(
+        image_doc
+    )
     (doc_output_dir / "images_metadata.json").write_text(
         json.dumps(picture_entries, indent=2), encoding="utf-8"
     )
@@ -278,7 +283,9 @@ def main() -> int:
     pdf_files = list(iter_pdfs(input_dir, args.pattern))
     logging.info("Found %d PDF files: %s", len(pdf_files), [str(p) for p in pdf_files])
     if not pdf_files:
-        logging.warning("No PDF files found in %s with pattern %s", input_dir, args.pattern)
+        logging.warning(
+            "No PDF files found in %s with pattern %s", input_dir, args.pattern
+        )
         return 1
 
     successes = 0
