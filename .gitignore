@@ -7,3 +7,9 @@ __pycache__/
 # global files
 .env
 .venv
+
+# documents
+documents/
+
+# output
+output/

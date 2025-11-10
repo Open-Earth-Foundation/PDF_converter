@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, Tuple
@@ -40,7 +41,6 @@ try:  # pragma: no cover - import convenience for script/module usage
         export_tables,
         iter_pdfs,
         normalize_toc_markdown,
-        setup_logging,
     )
 except ModuleNotFoundError:  # pragma: no cover
     from _shared import (
@@ -48,8 +48,9 @@ except ModuleNotFoundError:  # pragma: no cover
         export_tables,
         iter_pdfs,
         normalize_toc_markdown,
-        setup_logging,
     )
+
+from utils.logging_config import setup_logger
 
 
 def build_converter() -> DocumentConverter:
@@ -292,18 +293,13 @@ def parse_args() -> argparse.Namespace:
         default=10,
         help="Number of pages to process at once. Larger = faster but more memory (default: %(default)s).",
     )
-    parser.add_argument(
-        "--verbose",
-        action="store_true",
-        help="Enable verbose logging.",
-    )
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
 
-    setup_logging(args.verbose)
+    setup_logger()
 
     input_dir = Path(args.input_dir)
     output_dir = Path(args.output_dir)

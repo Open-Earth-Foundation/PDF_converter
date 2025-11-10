@@ -16,14 +16,6 @@ STANDARD_SENTINEL = ".docling_standard_ready"
 GRANITE_SENTINEL = ".docling_granite_ready"
 
 
-def setup_logging(verbose: bool) -> None:
-    """Initialise logging with a consistent format."""
-    logging.basicConfig(
-        level=logging.DEBUG if verbose else logging.INFO,
-        format="%(levelname)s %(message)s",
-    )
-
-
 def iter_pdfs(input_dir: Path, pattern: str) -> Iterable[Path]:
     """Yield PDF files that match the glob pattern (sorted for determinism)."""
     yield from sorted(input_dir.glob(pattern))

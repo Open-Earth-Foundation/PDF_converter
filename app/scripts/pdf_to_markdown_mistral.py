@@ -1,5 +1,20 @@
 #!/usr/bin/env python3
-"""Convert PDFs to Markdown using the Mistral Document AI OCR service."""
+"""Convert PDFs to Markdown using the Mistral Document AI OCR service.
+
+Example usage (using OpenAI directly):
+
+Ensure that in the .env file that:
+- the OPENROUTER_API_KEY is NOT set
+- the OPENROUTER_BASE_URL is NOT set
+- the OPENAI_API_KEY is set
+- the OPENAI_BASE_URL is set to https://api.openai.com/v1
+
+
+```
+cd app
+python -m app.scripts.pdf_to_markdown_mistral --input documents/heidelberg_nzc_ccc_ok.pdf --output-dir output/mistral --vision-model gpt-4o-mini
+```
+"""
 
 from __future__ import annotations
 
@@ -19,6 +34,7 @@ from mistralai import Mistral
 from dotenv import load_dotenv
 from openai import OpenAI
 
+from utils.logging_config import setup_logger
 
 try:  # Optional import used for retry logic.
     import httpx
@@ -36,14 +52,15 @@ try:  # Additional OpenAI exception types for better error handling.
 except ImportError:  # pragma: no cover - optional dependency
     APIConnectionError = APIStatusError = APITimeoutError = AuthenticationError = RateLimitError = None  # type: ignore[assignment]
 try:  # pragma: no cover - allow running from repository root or scripts folder
-    from scripts._shared import iter_pdfs, normalize_toc_markdown, setup_logging
+    from scripts._shared import iter_pdfs, normalize_toc_markdown
 except ModuleNotFoundError:  # pragma: no cover
-    from _shared import iter_pdfs, normalize_toc_markdown, setup_logging
+    from _shared import iter_pdfs, normalize_toc_markdown
 
-LOGGER = logging.getLogger(__name__)
+logger = logging.getLogger(__name__)
 
 # Default vision model for page refinement
-VISION_LLM = "anthropic/claude-haiku-4.5"
+# VISION_LLM = "anthropic/claude-haiku-4.5"
+VISION_LLM = "openai/gpt-4o-mini"
 
 
 class VisionRefinementError(RuntimeError):
@@ -329,7 +346,7 @@ def _refine_page_group_with_vision(  # noqa: PLR0912
             return current_markdowns
 
         page_label = ", ".join(str(number) for number in page_numbers)
-        LOGGER.debug(
+        logger.debug(
             "Pages %s round %d: requesting vision refinement", page_label, round_index
         )
         user_content = [
@@ -384,7 +401,7 @@ def _refine_page_group_with_vision(  # noqa: PLR0912
                         f"Vision refinement failed after {attempt} attempt(s) for pages {page_label}."
                     ) from exc
                 wait = max(retry_base_delay, 0.0) * attempt
-                LOGGER.warning(
+                logger.warning(
                     "Vision refinement request failed (%s) for pages %s. Retrying in %.1f seconds (%d/%d).",
                     exc.__class__.__name__,
                     page_label,
@@ -403,7 +420,7 @@ def _refine_page_group_with_vision(  # noqa: PLR0912
         assistant_message = response.choices[0].message
 
         if not assistant_message.tool_calls:
-            LOGGER.warning(
+            logger.warning(
                 "Vision model response for pages %s did not invoke a tool; skipping further refinement.",
                 page_label,
             )
@@ -414,7 +431,7 @@ def _refine_page_group_with_vision(  # noqa: PLR0912
             try:
                 arguments = json.loads(tool_call.function.arguments or "{}")
             except json.JSONDecodeError:
-                LOGGER.warning(
+                logger.warning(
                     "Unable to decode arguments for tool call %s on pages %s.",
                     tool_name,
                     page_label,
@@ -424,7 +441,7 @@ def _refine_page_group_with_vision(  # noqa: PLR0912
             if tool_name == "apply_page_group_edits":
                 updated_pages = arguments.get("updated_pages")
                 if not isinstance(updated_pages, list):
-                    LOGGER.warning(
+                    logger.warning(
                         "Vision model returned invalid updated_pages payload for pages %s.",
                         page_label,
                     )
@@ -441,14 +458,14 @@ def _refine_page_group_with_vision(  # noqa: PLR0912
                     if not isinstance(page_number, int) or not isinstance(
                         updated_markdown, str
                     ):
-                        LOGGER.warning(
+                        logger.warning(
                             "Vision model returned invalid update entry for pages %s.",
                             page_label,
                         )
                         continue
                     target_idx = number_to_index.get(page_number)
                     if target_idx is None:
-                        LOGGER.warning(
+                        logger.warning(
                             "Vision model referenced unknown page number %s (pages %s).",
                             page_number,
                             page_label,
@@ -465,7 +482,7 @@ def _refine_page_group_with_vision(  # noqa: PLR0912
                             / f"page-{page_number:04d}-round-{round_index}.diff"
                         )
                         diff_path.write_text(diff_text, encoding="utf-8")
-                    LOGGER.debug(
+                    logger.debug(
                         "Applied vision refinement round %d for page %d. Diff saved to %s",
                         round_index,
                         page_number,
@@ -474,16 +491,16 @@ def _refine_page_group_with_vision(  # noqa: PLR0912
                     current_markdowns[target_idx] = updated_markdown
 
             elif tool_name == "approve_page_group":
-                LOGGER.debug(
+                logger.debug(
                     "Vision model approved pages %s after %d round(s).",
                     page_label,
                     round_index,
                 )
                 return current_markdowns
             else:
-                LOGGER.debug("Unhandled tool %s for pages %s.", tool_name, page_label)
+                logger.debug("Unhandled tool %s for pages %s.", tool_name, page_label)
 
-    LOGGER.info(
+    logger.info(
         "Vision refinement reached max rounds (%d) for pages %s without explicit approval.",
         max_rounds,
         ", ".join(str(number) for number in page_numbers),
@@ -533,7 +550,7 @@ def _request_mistral_ocr(
             if attempt >= max_attempts or not _is_retryable_ocr_error(exc):
                 raise
             wait = base_delay * attempt
-            LOGGER.warning(
+            logger.warning(
                 "Mistral OCR request failed (%s). Retrying in %.1f seconds (%d/%d).",
                 exc.__class__.__name__,
                 wait,
@@ -616,7 +633,7 @@ def _apply_pairwise_vision_refinement(
         )
 
         if len(updated_markdowns) != len(batch):
-            LOGGER.warning(
+            logger.warning(
                 "Vision refinement returned %d page(s) for group %s; expected %d.",
                 len(updated_markdowns),
                 page_numbers,
@@ -632,7 +649,7 @@ def _apply_pairwise_vision_refinement(
                 try:
                     setattr(page_entry, "markdown", updated_markdown)
                 except Exception:  # pragma: no cover - defensive
-                    LOGGER.debug(
+                    logger.debug(
                         "Unable to assign updated markdown for page %d (non-dict entry).",
                         page_number,
                     )
@@ -674,7 +691,7 @@ def pdf_to_markdown_mistral(
     persistence_payload: object
 
     if not requires_split:
-        LOGGER.debug("Submitting %s to Mistral OCR.", pdf_path)
+        logger.debug("Submitting %s to Mistral OCR.", pdf_path)
         document_payload = {
             "type": "document_url",
             "document_url": _encode_pdf(pdf_path),
@@ -690,7 +707,7 @@ def pdf_to_markdown_mistral(
         aggregated_pages.extend(_normalise_page_entry(page) for page in pages)
         persistence_payload = response
     else:
-        LOGGER.info(
+        logger.info(
             "PDF %s size %d bytes exceeds max upload threshold (%d). Splitting into per-page OCR requests.",
             pdf_path.name,
             pdf_size_bytes,
@@ -715,7 +732,7 @@ def pdf_to_markdown_mistral(
                     try:
                         _, chunk_response, normalised_pages = future.result()
                     except Exception as exc:  # pragma: no cover - defensive
-                        LOGGER.exception(
+                        logger.exception(
                             "Error processing chunk %s (page %d) for %s: %s",
                             chunk_path.name,
                             local_page_index + 1,
@@ -725,7 +742,7 @@ def pdf_to_markdown_mistral(
                         continue
 
                     if not normalised_pages:
-                        LOGGER.warning(
+                        logger.warning(
                             "Empty OCR result returned for %s page %d while splitting.",
                             pdf_path.name,
                             local_page_index + 1,
@@ -760,13 +777,13 @@ def pdf_to_markdown_mistral(
                 retry_base_delay=vision_retry_base_delay,
             )
         except Exception as exc:  # pragma: no cover - defensive
-            LOGGER.exception("Vision refinement failed for %s: %s", pdf_path.name, exc)
+            logger.exception("Vision refinement failed for %s: %s", pdf_path.name, exc)
             raise
 
     for idx, page in enumerate(pages):
         page_markdown = _extract_attr(page, "markdown", "") or ""
         if not page_markdown.strip():
-            LOGGER.warning(
+            logger.warning(
                 "Empty markdown returned for %s page %d", pdf_path.name, idx + 1
             )
         page_index = idx + 1
@@ -780,7 +797,7 @@ def pdf_to_markdown_mistral(
         if save_page_markdown:
             page_markdown_path = document_dir / f"page-{page_index:04d}.md"
             page_markdown_path.write_text(page_markdown, encoding="utf-8")
-            LOGGER.debug("Wrote per-page markdown: %s", page_markdown_path.name)
+            logger.debug("Wrote per-page markdown: %s", page_markdown_path.name)
 
         if not include_images:
             continue
@@ -804,7 +821,7 @@ def pdf_to_markdown_mistral(
 
     markdown_path = document_dir / "combined_markdown.md"
     markdown_path.write_text(final_markdown, encoding="utf-8")
-    LOGGER.info("Wrote Markdown to %s", markdown_path)
+    logger.info("Wrote Markdown to %s", markdown_path)
 
     if save_response:
         _persist_response(persistence_payload, document_dir)
@@ -828,14 +845,13 @@ def _resolve_inputs(
         except ValueError:
             relative_parts = pdf.parts
         if any(part.lower() in excluded for part in relative_parts):
-            LOGGER.debug("Skipping %s (excluded directory)", pdf)
+            logger.debug("Skipping %s (excluded directory)", pdf)
             continue
         pdfs.append(pdf)
     return pdfs
 
 
 def main(args: argparse.Namespace) -> int:
-    setup_logging(args.verbose)
 
     input_path = Path(args.input).expanduser()
     output_root = Path(args.output_dir).expanduser()
@@ -843,17 +859,17 @@ def main(args: argparse.Namespace) -> int:
     try:
         pdfs = _resolve_inputs(input_path, args.pattern, args.exclude_subdir or [])
     except FileNotFoundError as exc:
-        LOGGER.error("%s", exc)
+        logger.error("%s", exc)
         return 1
 
     if not pdfs:
-        LOGGER.warning("No PDF files found for conversion.")
+        logger.warning("No PDF files found for conversion.")
         return 1
 
     try:
         client = _ensure_client(args.api_key)
     except RuntimeError as exc:
-        LOGGER.error("%s", exc)
+        logger.error("%s", exc)
         return 1
 
     vision_client = None
@@ -862,7 +878,7 @@ def main(args: argparse.Namespace) -> int:
         try:
             vision_client = _ensure_vision_client()
         except RuntimeError as exc:
-            LOGGER.error("Failed to initialise vision refinement client: %s", exc)
+            logger.error("Failed to initialise vision refinement client: %s", exc)
             return 1
 
     # Use hardcoded defaults for vision refinement parameters
@@ -872,9 +888,9 @@ def main(args: argparse.Namespace) -> int:
     vision_temperature = 0.1
 
     successes = 0
-    LOGGER.info("Found %d PDF(s) to process.", len(pdfs))
+    logger.info("Found %d PDF(s) to process.", len(pdfs))
     for pdf in pdfs:
-        LOGGER.info("Processing %s", pdf)
+        logger.info("Processing %s", pdf)
         try:
             pdf_to_markdown_mistral(
                 pdf,
@@ -892,24 +908,26 @@ def main(args: argparse.Namespace) -> int:
                 max_upload_bytes=args.max_upload_bytes,
             )
         except Exception as exc:  # pragma: no cover - defensive
-            LOGGER.exception("Failed to convert %s: %s", pdf, exc)
+            logger.exception("Failed to convert %s: %s", pdf, exc)
         else:
             successes += 1
 
-    LOGGER.info("Completed %d/%d conversions.", successes, len(pdfs))
+    logger.info("Completed %d/%d conversions.", successes, len(pdfs))
     return 0 if successes else 2
 
 
-if __name__ == "__main__":  # pragma: no cover
-    # Load environment variables first
-    PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
-    load_dotenv(PROJECT_ROOT / ".env")
+if __name__ == "__main__":
+    # Load environment variables
+    load_dotenv()
+
+    # Setup logging
+    setup_logger()
 
     parser = argparse.ArgumentParser(
         description="Convert PDFs to Markdown using Mistral OCR.",
     )
     parser.add_argument(
-        "input",
+        "--input",
         help="Path to a PDF file or a directory containing PDFs.",
     )
     parser.add_argument(
@@ -941,11 +959,6 @@ if __name__ == "__main__":  # pragma: no cover
         "--save-response",
         action="store_true",
         help="Persist the raw OCR response JSON alongside the Markdown output.",
-    )
-    parser.add_argument(
-        "--verbose",
-        action="store_true",
-        help="Enable verbose logging.",
     )
     parser.add_argument(
         "--vision-model",
