@@ -1,6 +1,12 @@
 #!/usr/bin/env python3
 """Convert PDFs to Markdown using the Mistral Document AI OCR service.
 
+Vision refinement (optional):
+- Set VISION_MODEL in your environment to enable a secondary vision pass.
+  - OpenRouter: use vendor-prefixed ids like "openai/gpt-4o-mini" or "anthropic/claude-haiku-4.5"
+  - OpenAI direct: use OpenAI ids like "gpt-4o-mini" and set OPENAI_BASE_URL=https://api.openai.com/v1
+If VISION_MODEL is empty or unset, the vision refinement step is skipped.
+
 Example usage (using OpenAI directly):
 
 Ensure that in the .env file that:
@@ -9,11 +15,11 @@ Ensure that in the .env file that:
 - the OPENAI_API_KEY is set
 - the OPENAI_BASE_URL is set to https://api.openai.com/v1
 
-
 ```
 cd app
-python -m app.scripts.pdf_to_markdown_mistral --input documents/heidelberg_nzc_ccc_ok.pdf --output-dir output/mistral --vision-model gpt-4o-mini
+python -m scripts.pdf_to_markdown_mistral --input documents/heidelberg_nzc_ccc_small.pdf --output-dir output/mistral
 ```
+
 """
 
 from __future__ import annotations
@@ -29,6 +35,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Iterable, Optional, Sequence
+from datetime import datetime
 
 from mistralai import Mistral
 from dotenv import load_dotenv
@@ -58,10 +65,6 @@ except ModuleNotFoundError:  # pragma: no cover
 
 logger = logging.getLogger(__name__)
 
-# Default vision model for page refinement
-# VISION_LLM = "anthropic/claude-haiku-4.5"
-VISION_LLM = "openai/gpt-4o-mini"
-
 
 class VisionRefinementError(RuntimeError):
     """Raised when the vision refinement step fails and should abort the pipeline."""
@@ -76,10 +79,10 @@ def _extract_attr(
 
 
 def _ensure_client(api_key: Optional[str] = None) -> Mistral:
-    key = api_key or os.environ.get("MISTRAL_API_KEY")
+    key = os.environ.get("MISTRAL_API_KEY")
     if not key:
         raise RuntimeError(
-            "Missing Mistral API key. Provide --api-key or set the MISTRAL_API_KEY environment variable."
+            "Missing Mistral API key. Set the MISTRAL_API_KEY environment variable."
         )
     return Mistral(api_key=key)
 
@@ -114,14 +117,10 @@ def _ensure_vision_client(
             "Missing optional dependency 'openai'. Install it to enable the vision refinement step."
         )
 
-    key = (
-        api_key
-        or os.environ.get("OPENROUTER_API_KEY")
-        or os.environ.get("OPENAI_API_KEY")
-    )
+    key = os.environ.get("OPENROUTER_API_KEY") or os.environ.get("OPENAI_API_KEY")
     if not key:
         raise RuntimeError(
-            "Missing OpenRouter/OpenAI API key. Provide --vision-api-key or set OPENROUTER_API_KEY / OPENAI_API_KEY."
+            "Missing OpenRouter/OpenAI API key. Set OPENROUTER_API_KEY or OPENAI_API_KEY."
         )
 
     resolved_base_url = (
@@ -598,25 +597,27 @@ def _apply_pairwise_vision_refinement(
     max_attempts: int,
     retry_base_delay: float,
 ) -> None:
-    if not pages:
+    if not pages or len(pages) < 2:
         return
 
-    batch: list[tuple[int, dict[str, Optional[object]]]] = []
     total_pages = len(pages)
-    for idx, page in enumerate(pages):
-        page_number = idx + 1
-        batch.append((page_number, page))
-        is_last = idx == total_pages - 1
-        if len(batch) < 2 and not is_last:
-            continue
+    for i in range(total_pages - 1):
+        # Sliding window of consecutive pages: [i, i+1] => page numbers [i+1, i+2]
+        left_entry = pages[i]
+        right_entry = pages[i + 1]
+        page_numbers = [i + 1, i + 2]
 
-        page_numbers = [entry[0] for entry in batch]
         original_markdowns = [
-            (_extract_attr(entry[1], "markdown", "") or "") for entry in batch
+            (_extract_attr(left_entry, "markdown", "") or ""),
+            (_extract_attr(right_entry, "markdown", "") or ""),
         ]
-        images_b64 = [_extract_attr(entry[1], "image_base64") for entry in batch]
+        images_b64 = [
+            _extract_attr(left_entry, "image_base64"),
+            _extract_attr(right_entry, "image_base64"),
+        ]
+
+        # Skip windows that contain no text content at all
         if not any(markdown.strip() for markdown in original_markdowns):
-            batch.clear()
             continue
 
         updated_markdowns = _refine_page_group_with_vision(
@@ -632,17 +633,18 @@ def _apply_pairwise_vision_refinement(
             retry_base_delay=retry_base_delay,
         )
 
-        if len(updated_markdowns) != len(batch):
+        if len(updated_markdowns) != 2:
             logger.warning(
-                "Vision refinement returned %d page(s) for group %s; expected %d.",
+                "Vision refinement returned %d page(s) for window %s; expected 2.",
                 len(updated_markdowns),
                 page_numbers,
-                len(batch),
             )
 
-        for (page_number, page_entry), updated_markdown in zip(
-            batch, updated_markdowns
-        ):
+        pair = [
+            (page_numbers[0], left_entry),
+            (page_numbers[1], right_entry),
+        ]
+        for (page_number, page_entry), updated_markdown in zip(pair, updated_markdowns):
             if isinstance(page_entry, dict):
                 page_entry["markdown"] = updated_markdown
             else:  # pragma: no cover - fallback for unexpected objects
@@ -653,7 +655,6 @@ def _apply_pairwise_vision_refinement(
                         "Unable to assign updated markdown for page %d (non-dict entry).",
                         page_number,
                     )
-        batch.clear()
 
 
 def pdf_to_markdown_mistral(
@@ -678,7 +679,8 @@ def pdf_to_markdown_mistral(
         raise FileNotFoundError(f"PDF not found: {pdf_path}")
 
     output_root = output_root.resolve()
-    document_dir = output_root / pdf_path.stem
+    timestamp_prefix = datetime.now().strftime("%Y%m%d_%H%M%S")
+    document_dir = output_root / f"{timestamp_prefix}_{pdf_path.stem}"
     document_dir.mkdir(parents=True, exist_ok=True)
     images_dir = document_dir / "images"
     if include_images:
@@ -867,13 +869,13 @@ def main(args: argparse.Namespace) -> int:
         return 1
 
     try:
-        client = _ensure_client(args.api_key)
+        client = _ensure_client()
     except RuntimeError as exc:
         logger.error("%s", exc)
         return 1
 
     vision_client = None
-    vision_model = args.vision_model
+    vision_model = (os.environ.get("VISION_MODEL") or "").strip()
     if vision_model:
         try:
             vision_client = _ensure_vision_client()
@@ -947,10 +949,6 @@ if __name__ == "__main__":
         help="Directory name to skip when discovering PDFs (can be used multiple times).",
     )
     parser.add_argument(
-        "--api-key",
-        help="Mistral API key. Defaults to the MISTRAL_API_KEY environment variable.",
-    )
-    parser.add_argument(
         "--no-images",
         action="store_true",
         help="Skip saving page images returned by the OCR service.",
@@ -959,11 +957,6 @@ if __name__ == "__main__":
         "--save-response",
         action="store_true",
         help="Persist the raw OCR response JSON alongside the Markdown output.",
-    )
-    parser.add_argument(
-        "--vision-model",
-        default=VISION_LLM,
-        help=f"Vision model identifier (OpenRouter/OpenAI). Enables the refinement step when provided (default: {VISION_LLM}).",
     )
     parser.add_argument(
         "--max-upload-bytes",
