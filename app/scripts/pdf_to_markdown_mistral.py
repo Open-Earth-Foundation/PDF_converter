@@ -28,6 +28,7 @@ import argparse
 import base64
 import difflib
 import json
+import re
 import logging
 import os
 import tempfile
@@ -150,6 +151,20 @@ def _render_unified_diff(before: str, after: str) -> str:
     return "\n".join(diff_lines)
 
 
+def _sanitize_markdown_from_tool(text: str) -> str:
+    if not isinstance(text, str):
+        return ""
+    # Normalize platform newlines
+    sanitized = text.replace("\r\n", "\n")
+    # Convert literal escape sequences produced by the tool into actual characters
+    sanitized = (
+        sanitized.replace("\\r\\n", "\n").replace("\\n", "\n").replace("\\t", "\t")
+    )
+    # Collapse excessive blank lines
+    sanitized = re.sub(r"\n{3,}", "\n\n", sanitized)
+    return sanitized
+
+
 def _should_split_document(pdf_path: Path, max_upload_bytes: int) -> bool:
     return max_upload_bytes > 0 and pdf_path.stat().st_size > max_upload_bytes
 
@@ -260,7 +275,12 @@ def _build_vision_prompt(page_numbers: Sequence[int]) -> str:
         "Fix OCR mistakes, preserve structure, and capture tables, lists, and headings faithfully. "
         "Use the available tools: call `apply_page_group_edits` to submit improved Markdown when changes "
         "are needed or `approve_page_group` when the transcriptions are correct. "
-        f"Give special attention to content that spans across {page_label}."
+        f"Give special attention to content that spans across {page_label}. "
+        "Do not remove or truncate content that plausibly continues across the page boundary "
+        "(e.g., hyphenated words, continued lists, or tables). If uncertain, prefer preserving and continuing "
+        "the structure rather than deleting lines. Ensure that table rows and paragraphs that cross page "
+        "boundaries remain contiguous and consistent across both pages. "
+        "Return Markdown with actual newline characters (no literal \\n sequences)."
     )
 
 
@@ -453,15 +473,18 @@ def _refine_page_group_with_vision(  # noqa: PLR0912
                     if not isinstance(entry, dict):
                         continue
                     page_number = entry.get("page_number")
-                    updated_markdown = entry.get("updated_markdown")
+                    updated_markdown_raw = entry.get("updated_markdown")
                     if not isinstance(page_number, int) or not isinstance(
-                        updated_markdown, str
+                        updated_markdown_raw, str
                     ):
                         logger.warning(
                             "Vision model returned invalid update entry for pages %s.",
                             page_label,
                         )
                         continue
+                    sanitized_markdown = _sanitize_markdown_from_tool(
+                        updated_markdown_raw
+                    )
                     target_idx = number_to_index.get(page_number)
                     if target_idx is None:
                         logger.warning(
@@ -472,13 +495,17 @@ def _refine_page_group_with_vision(  # noqa: PLR0912
                         continue
                     previous_markdown = current_markdowns[target_idx]
                     diff_text = _render_unified_diff(
-                        previous_markdown, updated_markdown
+                        previous_markdown, sanitized_markdown
                     )
                     diff_path = None
                     if diff_text:
-                        diff_path = (
-                            output_dir
-                            / f"page-{page_number:04d}-round-{round_index}.diff"
+                        # Include the pair context in the filename to avoid overwriting diffs
+                        if len(page_numbers) >= 2:
+                            pair_label = f"{page_numbers[0]:04d}-{page_numbers[1]:04d}"
+                        else:
+                            pair_label = f"{page_numbers[0]:04d}"
+                        diff_path = output_dir / (
+                            f"page-{page_number:04d}-pair-{pair_label}-round-{round_index}.diff"
                         )
                         diff_path.write_text(diff_text, encoding="utf-8")
                     logger.debug(
@@ -487,7 +514,7 @@ def _refine_page_group_with_vision(  # noqa: PLR0912
                         page_number,
                         diff_path or "N/A",
                     )
-                    current_markdowns[target_idx] = updated_markdown
+                    current_markdowns[target_idx] = sanitized_markdown
 
             elif tool_name == "approve_page_group":
                 logger.debug(
@@ -729,6 +756,10 @@ def pdf_to_markdown_mistral(
                     for local_page_index, chunk_path in page_chunks
                 }
 
+                # Collect results keyed by original page order to avoid reordering
+                per_page_results: dict[int, list[dict[str, Optional[object]]]] = {}
+                per_page_metadata: list[dict[str, object]] = []
+
                 for future in as_completed(futures):
                     local_page_index, chunk_path = futures[future]
                     try:
@@ -749,13 +780,22 @@ def pdf_to_markdown_mistral(
                             pdf_path.name,
                             local_page_index + 1,
                         )
-                    aggregated_pages.extend(normalised_pages)
-                    chunk_metadata.append(
+                    per_page_results[local_page_index] = normalised_pages
+                    per_page_metadata.append(
                         {
                             "page_number": local_page_index + 1,
                             "pages": normalised_pages,
                         }
                     )
+
+                # Assemble pages in correct order
+                for local_page_index in sorted(per_page_results.keys()):
+                    aggregated_pages.extend(per_page_results[local_page_index])
+
+                # Keep metadata in sorted page_number order as well
+                chunk_metadata = sorted(
+                    per_page_metadata, key=lambda m: int(m.get("page_number", 0))
+                )
         persistence_payload = {
             "mode": "split_per_page",
             "chunks": chunk_metadata,
@@ -816,9 +856,11 @@ def pdf_to_markdown_mistral(
         image_path = images_dir / f"page-{file_index:04d}.jpeg"
         image_path.write_bytes(image_bytes)
 
-    final_markdown = "\n\n---\n\n".join(
-        chunk.strip() for chunk in markdown_chunks
+    # Join pages into a single markdown file with a single newline between pages.
+    final_markdown = "\n".join(
+        (chunk or "").strip() for chunk in markdown_chunks
     ).strip()
+
     final_markdown = normalize_toc_markdown(final_markdown) if final_markdown else ""
 
     markdown_path = document_dir / "combined_markdown.md"
