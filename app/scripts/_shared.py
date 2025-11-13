@@ -16,11 +16,6 @@ STANDARD_SENTINEL = ".docling_standard_ready"
 GRANITE_SENTINEL = ".docling_granite_ready"
 
 
-def iter_pdfs(input_dir: Path, pattern: str) -> Iterable[Path]:
-    """Yield PDF files that match the glob pattern (sorted for determinism)."""
-    yield from sorted(input_dir.glob(pattern))
-
-
 def _normalized_text(value: str) -> str:
     """Normalize text for similarity comparisons."""
     return re.sub(r"\s+", " ", value).strip().lower()

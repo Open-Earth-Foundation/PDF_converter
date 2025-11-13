@@ -39,16 +39,16 @@ try:  # pragma: no cover - import convenience for script/module usage
     from scripts._shared import (
         ensure_artifacts_dir,
         export_tables,
-        iter_pdfs,
         normalize_toc_markdown,
     )
 except ModuleNotFoundError:  # pragma: no cover
     from _shared import (
         ensure_artifacts_dir,
         export_tables,
-        iter_pdfs,
         normalize_toc_markdown,
     )
+
+from utils.utils import iter_pdfs
 
 from utils.logging_config import setup_logger
 
