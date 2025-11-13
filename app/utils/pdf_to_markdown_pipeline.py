@@ -644,6 +644,7 @@ def pdf_to_markdown_pipeline(
     max_upload_bytes: int = 10 * 1024 * 1024,
 ) -> Path:
     """Perform OCR with Mistral and persist Markdown (and optional page images)."""
+    pipeline_t0 = time.perf_counter()
     pdf_path = pdf_path.resolve()
     if not pdf_path.is_file():
         raise FileNotFoundError(f"PDF not found: {pdf_path}")
@@ -828,5 +829,15 @@ def pdf_to_markdown_pipeline(
 
     if save_response:
         _persist_response(persistence_payload, document_dir)
+
+    # Final summary timing
+    total_elapsed = time.perf_counter() - pipeline_t0
+    total_pages = len(pages)
+    logger.info(
+        "Completed %s with %d page(s) in %.2fs",
+        pdf_path.name,
+        total_pages,
+        total_elapsed,
+    )
 
     return markdown_path
