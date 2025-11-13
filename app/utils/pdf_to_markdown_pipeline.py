@@ -1,68 +1,28 @@
-#!/usr/bin/env python3
-"""Convert PDFs to Markdown using the Mistral Document AI OCR service.
-
-Vision refinement (optional):
-- Set VISION_MODEL in your environment to enable a secondary vision pass.
-  - OpenRouter: use vendor-prefixed ids like "openai/gpt-4o-mini" or "anthropic/claude-haiku-4.5"
-  - OpenAI direct: use OpenAI ids like "gpt-4o-mini" and set OPENAI_BASE_URL=https://api.openai.com/v1
-If VISION_MODEL is empty or unset, the vision refinement step is skipped.
-
-Example usage (using OpenAI directly):
-
-Ensure that in the .env file that:
-- the OPENROUTER_API_KEY is NOT set
-- the OPENROUTER_BASE_URL is NOT set
-- the OPENAI_API_KEY is set
-- the OPENAI_BASE_URL is set to https://api.openai.com/v1
-
-```
-cd app
-python -m scripts.pdf_to_markdown_mistral --input documents/heidelberg_nzc_ccc_small.pdf --output-dir output/mistral
-```
-
-"""
-
-from __future__ import annotations
-
-import argparse
-import base64
-import difflib
-import json
-import re
-import logging
-import os
-import tempfile
-import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Iterable, Optional, Sequence
+from typing import Optional, Sequence
 from datetime import datetime
-
-from mistralai import Mistral
-from dotenv import load_dotenv
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from openai import OpenAI
+from utils.create_mistral_client import create_mistral_client
+from utils.create_vision_client import create_vision_client
+import logging
+import base64
+from scripts._shared import normalize_toc_markdown
+from mistralai import Mistral
+import time
+import httpx
+import json
 
-from utils.logging_config import setup_logger
-
-try:  # Optional import used for retry logic.
-    import httpx
-except ImportError:  # pragma: no cover - optional dependency
-    httpx = None  # type: ignore[assignment]
-
-try:  # Additional OpenAI exception types for better error handling.
-    from openai import (  # type: ignore[import]
-        APIConnectionError,
-        APIStatusError,
-        APITimeoutError,
-        AuthenticationError,
-        RateLimitError,
-    )
-except ImportError:  # pragma: no cover - optional dependency
-    APIConnectionError = APIStatusError = APITimeoutError = AuthenticationError = RateLimitError = None  # type: ignore[assignment]
-try:  # pragma: no cover - allow running from repository root or scripts folder
-    from scripts._shared import iter_pdfs, normalize_toc_markdown
-except ModuleNotFoundError:  # pragma: no cover
-    from _shared import iter_pdfs, normalize_toc_markdown
+from openai import (
+    APIConnectionError,
+    APIStatusError,
+    APITimeoutError,
+    AuthenticationError,
+    RateLimitError,
+)
+import difflib
+import re
+import tempfile
 
 logger = logging.getLogger(__name__)
 
@@ -77,15 +37,6 @@ def _extract_attr(
     if isinstance(entry, dict):
         return entry.get(name, default)
     return getattr(entry, name, default)
-
-
-def _ensure_client(api_key: Optional[str] = None) -> Mistral:
-    key = os.environ.get("MISTRAL_API_KEY")
-    if not key:
-        raise RuntimeError(
-            "Missing Mistral API key. Set the MISTRAL_API_KEY environment variable."
-        )
-    return Mistral(api_key=key)
 
 
 def _encode_pdf(pdf_path: Path) -> str:
@@ -106,38 +57,6 @@ def _persist_response(content: object, target_dir: Path) -> None:
         else:
             raise RuntimeError("Unable to serialise Mistral OCR response to JSON.")
     json_path.write_text(json_payload, encoding="utf-8")
-
-
-def _ensure_vision_client(
-    api_key: Optional[str] = None,
-    *,
-    base_url: Optional[str] = None,
-) -> OpenAI:
-    if OpenAI is None:  # pragma: no cover - optional dependency
-        raise RuntimeError(
-            "Missing optional dependency 'openai'. Install it to enable the vision refinement step."
-        )
-
-    key = os.environ.get("OPENROUTER_API_KEY") or os.environ.get("OPENAI_API_KEY")
-    if not key:
-        raise RuntimeError(
-            "Missing OpenRouter/OpenAI API key. Set OPENROUTER_API_KEY or OPENAI_API_KEY."
-        )
-
-    resolved_base_url = (
-        base_url or os.environ.get("OPENAI_BASE_URL") or "https://openrouter.ai/api/v1"
-    )
-
-    # Set HTTP-Referer for OpenRouter (required for their API)
-    default_headers = {
-        "HTTP-Referer": "https://github.com/docling/pdf-ocr-refinement",
-    }
-
-    return OpenAI(  # type: ignore[return-value]
-        api_key=key,
-        base_url=resolved_base_url,
-        default_headers=default_headers,
-    )
 
 
 def _render_unified_diff(before: str, after: str) -> str:
@@ -284,7 +203,7 @@ def _build_vision_prompt(page_numbers: Sequence[int]) -> str:
     )
 
 
-def _refine_page_group_with_vision(  # noqa: PLR0912
+def _refine_page_group_with_vision(
     *,
     client: OpenAI,
     model: str,
@@ -365,7 +284,8 @@ def _refine_page_group_with_vision(  # noqa: PLR0912
             return current_markdowns
 
         page_label = ", ".join(str(number) for number in page_numbers)
-        logger.debug(
+        round_t0 = time.perf_counter()
+        logger.info(
             "Pages %s round %d: requesting vision refinement", page_label, round_index
         )
         user_content = [
@@ -526,6 +446,14 @@ def _refine_page_group_with_vision(  # noqa: PLR0912
             else:
                 logger.debug("Unhandled tool %s for pages %s.", tool_name, page_label)
 
+        round_elapsed = time.perf_counter() - round_t0
+        logger.info(
+            "Vision refinement round %d for pages %s took %.2fs",
+            round_index,
+            page_label,
+            round_elapsed,
+        )
+
     logger.info(
         "Vision refinement reached max rounds (%d) for pages %s without explicit approval.",
         max_rounds,
@@ -555,56 +483,31 @@ def _is_retryable_ocr_error(exc: Exception) -> bool:
     return False
 
 
-def _request_mistral_ocr(
-    client: Mistral,
-    *,
-    document_payload: dict[str, object],
-    include_images: bool,
-    max_attempts: int = 3,
-    base_delay: float = 2.0,
-) -> object:
-    last_error: Optional[Exception] = None
-    for attempt in range(1, max_attempts + 1):
-        try:
-            return client.ocr.process(
-                model="mistral-ocr-latest",
-                document=document_payload,
-                include_image_base64=include_images,
-            )
-        except Exception as exc:  # pragma: no cover - defensive
-            last_error = exc
-            if attempt >= max_attempts or not _is_retryable_ocr_error(exc):
-                raise
-            wait = base_delay * attempt
-            logger.warning(
-                "Mistral OCR request failed (%s). Retrying in %.1f seconds (%d/%d).",
-                exc.__class__.__name__,
-                wait,
-                attempt,
-                max_attempts,
-            )
-            time.sleep(wait)
-    if last_error:  # pragma: no cover - defensive
-        raise last_error
-    raise RuntimeError("Unexpected OCR retry loop termination.")
-
-
 def _process_pdf_chunk(
     *,
     local_page_index: int,
     chunk_path: Path,
     client: Mistral,
     include_images: bool,
+    ocr_model: str,
 ) -> tuple[int, object, list[dict[str, Optional[object]]]]:
     """Process a single PDF chunk and return (page_index, response, normalized_pages)."""
     document_payload = {
         "type": "document_url",
         "document_url": _encode_pdf(chunk_path),
     }
+    t0 = time.perf_counter()
     chunk_response = _request_mistral_ocr(
         client,
         document_payload=document_payload,
         include_images=include_images,
+        ocr_model=ocr_model,
+    )
+    elapsed = time.perf_counter() - t0
+    logger.info(
+        "OCR chunk for page %d took %.2fs",
+        local_page_index + 1,
+        elapsed,
     )
     chunk_pages: Sequence[object] = _extract_attr(chunk_response, "pages", [])  # type: ignore[arg-type]
     if isinstance(chunk_response, dict):
@@ -647,6 +550,7 @@ def _apply_pairwise_vision_refinement(
         if not any(markdown.strip() for markdown in original_markdowns):
             continue
 
+        win_t0 = time.perf_counter()
         updated_markdowns = _refine_page_group_with_vision(
             client=client,
             model=model,
@@ -658,6 +562,11 @@ def _apply_pairwise_vision_refinement(
             temperature=temperature,
             max_attempts=max_attempts,
             retry_base_delay=retry_base_delay,
+        )
+        logger.info(
+            "Vision refinement for pages %s took %.2fs",
+            page_numbers,
+            time.perf_counter() - win_t0,
         )
 
         if len(updated_markdowns) != 2:
@@ -674,29 +583,63 @@ def _apply_pairwise_vision_refinement(
         for (page_number, page_entry), updated_markdown in zip(pair, updated_markdowns):
             if isinstance(page_entry, dict):
                 page_entry["markdown"] = updated_markdown
-            else:  # pragma: no cover - fallback for unexpected objects
+            else:
                 try:
                     setattr(page_entry, "markdown", updated_markdown)
-                except Exception:  # pragma: no cover - defensive
+                except Exception:
                     logger.debug(
                         "Unable to assign updated markdown for page %d (non-dict entry).",
                         page_number,
                     )
 
 
-def pdf_to_markdown_mistral(
+def _request_mistral_ocr(
+    client: Mistral,
+    *,
+    document_payload: dict[str, object],
+    include_images: bool,
+    ocr_model: str,
+    max_attempts: int = 3,
+    base_delay: float = 2.0,
+) -> object:
+    last_error: Optional[Exception] = None
+    for attempt in range(1, max_attempts + 1):
+        try:
+            return client.ocr.process(
+                model=ocr_model,
+                document=document_payload,
+                include_image_base64=include_images,
+            )
+        except Exception as exc:
+            last_error = exc
+            if attempt >= max_attempts or not _is_retryable_ocr_error(exc):
+                raise
+            wait = base_delay * attempt
+            logger.warning(
+                "Mistral OCR request failed (%s). Retrying in %.1f seconds (%d/%d).",
+                exc.__class__.__name__,
+                wait,
+                attempt,
+                max_attempts,
+            )
+            time.sleep(wait)
+    if last_error:
+        raise last_error
+    raise RuntimeError("Unexpected OCR retry loop termination.")
+
+
+def pdf_to_markdown_pipeline(
     pdf_path: Path,
     output_root: Path,
     *,
-    client: Optional[Mistral] = None,
     include_images: bool = True,
+    ocr_model: str = "mistral-ocr-latest",
     save_response: bool = False,
     save_page_markdown: bool = True,
-    vision_client: Optional[OpenAI] = None,
     vision_model: Optional[str] = None,
     vision_max_rounds: int = 3,
     vision_temperature: float = 0.0,
-    vision_max_attempts: int = 3,
+    vision_max_retries: int = 3,
     vision_retry_base_delay: float = 2.0,
     max_upload_bytes: int = 10 * 1024 * 1024,
 ) -> Path:
@@ -713,7 +656,7 @@ def pdf_to_markdown_mistral(
     if include_images:
         images_dir.mkdir(exist_ok=True)
 
-    mistral_client = client or _ensure_client()
+    mistral_client = create_mistral_client()
     pdf_size_bytes = pdf_path.stat().st_size
     requires_split = _should_split_document(pdf_path, max_upload_bytes)
     aggregated_pages: list[dict[str, Optional[object]]] = []
@@ -725,10 +668,17 @@ def pdf_to_markdown_mistral(
             "type": "document_url",
             "document_url": _encode_pdf(pdf_path),
         }
+        t_doc_ocr0 = time.perf_counter()
         response = _request_mistral_ocr(
             mistral_client,
             document_payload=document_payload,
             include_images=include_images,
+            ocr_model=ocr_model,
+        )
+        logger.info(
+            "OCR (full document) for %s took %.2fs",
+            pdf_path.name,
+            time.perf_counter() - t_doc_ocr0,
         )
         pages: Sequence[object] = _extract_attr(response, "pages", [])  # type: ignore[arg-type]
         if isinstance(response, dict):
@@ -744,6 +694,7 @@ def pdf_to_markdown_mistral(
         )
         chunk_metadata: list[dict[str, object]] = []
         with _prepare_pdf_page_chunks(pdf_path) as page_chunks:
+            split_phase_t0 = time.perf_counter()
             with ThreadPoolExecutor(max_workers=3) as executor:
                 futures = {
                     executor.submit(
@@ -752,6 +703,7 @@ def pdf_to_markdown_mistral(
                         chunk_path=chunk_path,
                         client=mistral_client,
                         include_images=include_images,
+                        ocr_model=ocr_model,
                     ): (local_page_index, chunk_path)
                     for local_page_index, chunk_path in page_chunks
                 }
@@ -764,7 +716,7 @@ def pdf_to_markdown_mistral(
                     local_page_index, chunk_path = futures[future]
                     try:
                         _, chunk_response, normalised_pages = future.result()
-                    except Exception as exc:  # pragma: no cover - defensive
+                    except Exception as exc:
                         logger.exception(
                             "Error processing chunk %s (page %d) for %s: %s",
                             chunk_path.name,
@@ -796,6 +748,12 @@ def pdf_to_markdown_mistral(
                 chunk_metadata = sorted(
                     per_page_metadata, key=lambda m: int(m.get("page_number", 0))
                 )
+            logger.info(
+                "OCR split phase for %s took %.2fs across %d page(s)",
+                pdf_path.name,
+                time.perf_counter() - split_phase_t0,
+                len(per_page_results),
+            )
         persistence_payload = {
             "mode": "split_per_page",
             "chunks": chunk_metadata,
@@ -806,8 +764,9 @@ def pdf_to_markdown_mistral(
     markdown_chunks: list[str] = []
     vision_diff_dir = document_dir / "vision_diffs"
 
-    if vision_client and vision_model:
+    if vision_model:
         try:
+            vision_client = create_vision_client()
             _apply_pairwise_vision_refinement(
                 pages,
                 client=vision_client,
@@ -815,10 +774,10 @@ def pdf_to_markdown_mistral(
                 output_dir=vision_diff_dir,
                 max_rounds=vision_max_rounds,
                 temperature=vision_temperature,
-                max_attempts=vision_max_attempts,
+                max_attempts=vision_max_retries,
                 retry_base_delay=vision_retry_base_delay,
             )
-        except Exception as exc:  # pragma: no cover - defensive
+        except Exception as exc:
             logger.exception("Vision refinement failed for %s: %s", pdf_path.name, exc)
             raise
 
@@ -871,141 +830,3 @@ def pdf_to_markdown_mistral(
         _persist_response(persistence_payload, document_dir)
 
     return markdown_path
-
-
-def _resolve_inputs(
-    input_path: Path, pattern: str, excluded_dirs: Iterable[str]
-) -> list[Path]:
-    excluded = {entry.lower() for entry in excluded_dirs}
-    if input_path.is_file():
-        return [input_path]
-    if not input_path.exists():
-        raise FileNotFoundError(f"Input path does not exist: {input_path}")
-
-    pdfs: list[Path] = []
-    for pdf in iter_pdfs(input_path, pattern):
-        try:
-            relative_parts = pdf.relative_to(input_path).parts
-        except ValueError:
-            relative_parts = pdf.parts
-        if any(part.lower() in excluded for part in relative_parts):
-            logger.debug("Skipping %s (excluded directory)", pdf)
-            continue
-        pdfs.append(pdf)
-    return pdfs
-
-
-def main(args: argparse.Namespace) -> int:
-
-    input_path = Path(args.input).expanduser()
-    output_root = Path(args.output_dir).expanduser()
-
-    try:
-        pdfs = _resolve_inputs(input_path, args.pattern, args.exclude_subdir or [])
-    except FileNotFoundError as exc:
-        logger.error("%s", exc)
-        return 1
-
-    if not pdfs:
-        logger.warning("No PDF files found for conversion.")
-        return 1
-
-    try:
-        client = _ensure_client()
-    except RuntimeError as exc:
-        logger.error("%s", exc)
-        return 1
-
-    vision_client = None
-    vision_model = (os.environ.get("VISION_MODEL") or "").strip()
-    if vision_model:
-        try:
-            vision_client = _ensure_vision_client()
-        except RuntimeError as exc:
-            logger.error("Failed to initialise vision refinement client: %s", exc)
-            return 1
-
-    # Use hardcoded defaults for vision refinement parameters
-    vision_max_rounds = 3
-    vision_max_attempts = 3
-    vision_retry_delay = 2.0
-    vision_temperature = 0.1
-
-    successes = 0
-    logger.info("Found %d PDF(s) to process.", len(pdfs))
-    for pdf in pdfs:
-        logger.info("Processing %s", pdf)
-        try:
-            pdf_to_markdown_mistral(
-                pdf,
-                output_root,
-                client=client,
-                include_images=not args.no_images,
-                save_response=args.save_response,
-                save_page_markdown=True,
-                vision_client=vision_client,
-                vision_model=vision_model,
-                vision_max_rounds=vision_max_rounds,
-                vision_temperature=vision_temperature,
-                vision_max_attempts=vision_max_attempts,
-                vision_retry_base_delay=vision_retry_delay,
-                max_upload_bytes=args.max_upload_bytes,
-            )
-        except Exception as exc:  # pragma: no cover - defensive
-            logger.exception("Failed to convert %s: %s", pdf, exc)
-        else:
-            successes += 1
-
-    logger.info("Completed %d/%d conversions.", successes, len(pdfs))
-    return 0 if successes else 2
-
-
-if __name__ == "__main__":
-    # Load environment variables
-    load_dotenv()
-
-    # Setup logging
-    setup_logger()
-
-    parser = argparse.ArgumentParser(
-        description="Convert PDFs to Markdown using Mistral OCR.",
-    )
-    parser.add_argument(
-        "--input",
-        help="Path to a PDF file or a directory containing PDFs.",
-    )
-    parser.add_argument(
-        "--output-dir",
-        default=str(Path("output") / "mistral_OCR"),
-        help="Directory where conversion artefacts will be written.",
-    )
-    parser.add_argument(
-        "--pattern",
-        default="*.pdf",
-        help="Glob pattern to select PDFs when input is a directory.",
-    )
-    parser.add_argument(
-        "--exclude-subdir",
-        action="append",
-        default=["old"],
-        help="Directory name to skip when discovering PDFs (can be used multiple times).",
-    )
-    parser.add_argument(
-        "--no-images",
-        action="store_true",
-        help="Skip saving page images returned by the OCR service.",
-    )
-    parser.add_argument(
-        "--save-response",
-        action="store_true",
-        help="Persist the raw OCR response JSON alongside the Markdown output.",
-    )
-    parser.add_argument(
-        "--max-upload-bytes",
-        type=int,
-        default=int(os.environ.get("MAX_UPLOAD_BYTES", str(10 * 1024 * 1024))),
-        help="Maximum PDF size (bytes) to send in a single OCR request before splitting per page (default: 10485760). "
-        "Smaller values reduce per-request payload and enable parallel processing (up to 3 requests).",
-    )
-    args = parser.parse_args()
-    raise SystemExit(main(args))
