@@ -117,6 +117,7 @@ def run_class_extraction(
     model_cls: Type[BaseModel],
     output_dir: Path,
     max_rounds: int,
+    config: dict | None = None,
 ) -> None:
     """
     Run extraction for a single Pydantic model class.
@@ -130,6 +131,7 @@ def run_class_extraction(
         model_cls: Target Pydantic model class
         output_dir: Directory for output JSON files
         max_rounds: Maximum extraction rounds
+        config: Configuration dict containing debug settings
     """
     output_path = output_dir / f"{model_cls.__name__}.json"
     stored_instances = load_existing(output_path)
@@ -160,7 +162,7 @@ def run_class_extraction(
 
         if not tool_calls:
             # Log full response for debugging when no tool calls returned
-            log_full_response(model_cls.__name__, response, round_idx)
+            log_full_response(model_cls.__name__, response, round_idx, config)
             LOGGER.warning(
                 "No tool calls returned for %s (round %d). Assistant said: %s",
                 model_cls.__name__,
@@ -170,7 +172,7 @@ def run_class_extraction(
             break
         else:
             # Also log successful responses for comparison
-            log_full_response(model_cls.__name__, response, round_idx)
+            log_full_response(model_cls.__name__, response, round_idx, config)
 
         tool_outputs: list[dict] = []
         extracted_complete = False
@@ -363,6 +365,7 @@ def main() -> None:
             model_cls=model_cls,
             output_dir=output_dir,
             max_rounds=max_rounds,
+            config=config,
         )
 
 

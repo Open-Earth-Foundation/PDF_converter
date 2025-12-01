@@ -43,8 +43,21 @@ def extract_text(output_message: ResponseOutputMessage) -> str:
     return "\n".join(parts)
 
 
-def log_full_response(class_name: str, response: "Response", round_idx: int) -> None:
-    """Write full response to a debug log file for inspection."""
+def log_full_response(class_name: str, response: "Response", round_idx: int, config: dict | None = None) -> None:
+    """Write full response to a debug log file for inspection.
+    
+    Args:
+        class_name: Name of the class being extracted.
+        response: The response object from OpenAI.
+        round_idx: The current round index.
+        config: Configuration dict. If provided, checks debug_logs_enabled setting.
+    """
+    # Check if debug logging is enabled in config
+    if config is not None:
+        if not config.get("debug_logs_enabled", True):
+            LOGGER.debug("Debug logging disabled; skipping full response log for %s (round %d)", class_name, round_idx)
+            return
+    
     DEBUG_LOG_DIR.mkdir(parents=True, exist_ok=True)
     log_file = DEBUG_LOG_DIR / f"{class_name}_round{round_idx}.json"
     
