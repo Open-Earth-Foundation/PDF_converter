@@ -1,42 +1,54 @@
+"""
+Extraction engine for parsing Pydantic model instances from Markdown documents.
+
+Uses OpenAI's Responses API with agentic tool-calling patterns to extract
+structured data from Markdown converted from PDFs, mapping to domain models.
+"""
+
 from __future__ import annotations
 
 import argparse
 import importlib
-import inspect
 import json
 import logging
 import os
 import sys
 from pathlib import Path
-from typing import List, Sequence, Set, Type, get_args, get_origin
+from typing import Type
 
 from dotenv import load_dotenv
 from openai import OpenAI
-import yaml
 import tiktoken
-from openai.types.responses import (
-    Response,
-    ResponseFunctionToolCall,
-    ResponseOutputMessage,
-)
-from openai.types.responses.response_output_text import ResponseOutputText
-from pydantic import BaseModel, ValidationError
-from uuid import UUID, uuid5
+from pydantic import BaseModel
 
 # Ensure the project root is on the import path when executed as a script
 ROOT_DIR = Path(__file__).resolve().parents[2]
 if str(ROOT_DIR) not in sys.path:
     sys.path.append(str(ROOT_DIR))
 
+from app.extraction.utils import (
+    load_config,
+    load_prompt,
+    load_class_context,
+    clean_debug_logs,
+    load_markdown,
+    load_existing,
+    persist_instances,
+    escape_braces,
+    extract_model_classes,
+    to_json_ready,
+    summarise_instances,
+    make_tool_output,
+    parse_record_instances,
+    handle_response_output,
+    truncate,
+    log_response_preview,
+    log_full_response,
+)
+
 LOGGER = logging.getLogger(__name__)
 
-PROMPTS_DIR = Path(__file__).resolve().parent / "prompts"
-DEFAULT_OUTPUT_DIR = Path(__file__).resolve().parent / "output"
-CONFIG_PATH = Path(__file__).resolve().parent / "config.yaml"
-DEBUG_LOG_DIR = Path(__file__).resolve().parent / "debug_logs"
-LOG_SNIPPET_LEN = 320
-IGNORE_CLASS_NAMES = {"PossiblyTEF"}
-
+# Tool definitions for OpenAI API
 RECORD_TOOL = {
     "type": "function",
     "name": "record_instances",
@@ -95,261 +107,6 @@ ALL_EXTRACTED_TOOL = {
 TOOLS = [RECORD_TOOL, ALL_EXTRACTED_TOOL]
 
 
-def _load_prompt(name: str) -> str:
-    path = PROMPTS_DIR / name
-    if not path.exists():
-        raise FileNotFoundError(f"Prompt file missing: {path}")
-    return path.read_text(encoding="utf-8").strip()
-
-
-def _escape_braces(text: str) -> str:
-    return text.replace("{", "{{").replace("}", "}}")
-
-
-def _contains_uuid_type(annotation: object) -> bool:
-    if annotation is UUID:
-        return True
-    origin = get_origin(annotation)
-    if origin is None:
-        return False
-    return any(_contains_uuid_type(arg) for arg in get_args(annotation))
-
-
-def _auto_fill_missing_ids(raw: dict, model_cls: Type[BaseModel]) -> dict:
-    """Fill missing UUID fields with deterministic placeholders for validation."""
-    filled = dict(raw)
-    for name, field in model_cls.model_fields.items():
-        alias = field.alias or name
-        if alias in filled and filled[alias]:
-            continue
-        if _contains_uuid_type(field.annotation):
-            placeholder = str(
-                uuid5(
-                    uuid5(UUID(int=0), model_cls.__name__),
-                    json.dumps(raw, sort_keys=True, ensure_ascii=False) + alias,
-                )
-            )
-            filled[alias] = placeholder
-    return filled
-
-
-def _load_class_context(class_name: str) -> str:
-    path = PROMPTS_DIR / f"{class_name}.md"
-    if path.exists():
-        return path.read_text(encoding="utf-8").strip()
-    return (
-        f"Focus on extracting {class_name} entries related to Climate City Contract "
-        "and climate-action programs. If key identifiers are missing, skip that row rather than inventing data."
-    )
-
-
-def _load_config() -> dict:
-    if not CONFIG_PATH.exists():
-        raise FileNotFoundError(f"Config file required: {CONFIG_PATH}")
-    try:
-        data = yaml.safe_load(CONFIG_PATH.read_text(encoding="utf-8")) or {}
-        if not isinstance(data, dict):
-            raise ValueError(f"Config file {CONFIG_PATH} is not a mapping.")
-        return data
-    except Exception as exc:
-        raise RuntimeError(f"Failed to load config {CONFIG_PATH}: {exc}")
-
-
-def _extract_model_classes(models_module) -> list[Type[BaseModel]]:
-    base = getattr(models_module, "BaseDBModel", BaseModel)
-    classes: list[Type[BaseModel]] = []
-    for _, obj in inspect.getmembers(models_module, inspect.isclass):
-        if obj is base or not issubclass(obj, base):
-            continue
-        # Keep only classes defined in this module (skip imports)
-        if obj.__module__ != models_module.__name__:
-            continue
-        if obj.__name__ in IGNORE_CLASS_NAMES:
-            continue
-        classes.append(obj)
-    return sorted(classes, key=lambda cls: cls.__name__)
-
-
-def _to_json_ready(model_obj: BaseModel) -> dict:
-    """Return a JSON-serialisable dict using field aliases."""
-    return json.loads(model_obj.model_dump_json(by_alias=True))
-
-
-def _summarise_instances(instances: Sequence[dict], max_items: int = 3) -> str:
-    if not instances:
-        return "None yet."
-    preview = [json.dumps(entry, ensure_ascii=False) for entry in list(instances)[:max_items]]
-    if len(instances) > max_items:
-        preview.append(f"... ({len(instances) - max_items} more)")
-    return "\n".join(preview)
-
-
-def _load_markdown(markdown_path: Path) -> str:
-    if not markdown_path.exists():
-        raise FileNotFoundError(f"Markdown file not found: {markdown_path}")
-    return markdown_path.read_text(encoding="utf-8")
-
-
-def _load_existing(output_path: Path) -> list[dict]:
-    if not output_path.exists():
-        return []
-    try:
-        return json.loads(output_path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as exc:
-        LOGGER.warning("Existing JSON at %s could not be parsed: %s", output_path, exc)
-        return []
-
-
-def _persist_instances(output_path: Path, instances: Sequence[dict]) -> None:
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(json.dumps(list(instances), indent=2, ensure_ascii=False), encoding="utf-8")
-
-
-def _extract_text(output_message: ResponseOutputMessage) -> str:
-    parts: list[str] = []
-    for content in output_message.content:
-        if isinstance(content, ResponseOutputText):
-            parts.append(content.text)
-    return "\n".join(parts)
-
-
-def _make_tool_output(call_id: str, payload: dict) -> dict:
-    return {"type": "function_call_output", "call_id": call_id, "output": json.dumps(payload)}
-
-
-def _truncate(text: str, limit: int = LOG_SNIPPET_LEN) -> str:
-    if len(text) <= limit:
-        return text
-    return text[: limit - 3] + "..."
-
-
-def _log_response_preview(model_name: str, assistant_messages: list[str], tool_calls: list[ResponseFunctionToolCall]) -> None:
-    if assistant_messages:
-        preview = _truncate(" | ".join(assistant_messages))
-        LOGGER.info("[%s] Assistant preview: %s", model_name, preview)
-    if tool_calls:
-        names = [call.name for call in tool_calls]
-        LOGGER.info("[%s] Tool calls: %s", model_name, ", ".join(names))
-
-
-def _log_full_response(class_name: str, response: Response, round_idx: int) -> None:
-    """Write full response to a debug log file for inspection."""
-    DEBUG_LOG_DIR.mkdir(parents=True, exist_ok=True)
-    log_file = DEBUG_LOG_DIR / f"{class_name}_round{round_idx}.json"
-    
-    debug_info = {
-        "response_id": response.id,
-        "model": getattr(response, "model", None),
-        "status": getattr(response, "status", None),
-        "has_output_field": hasattr(response, "output"),
-        "output_length": len(response.output) if hasattr(response, "output") and response.output else 0,
-        "output_items": [],
-    }
-    
-    # Parse each item in response.output
-    for idx, item in enumerate(response.output or []):
-        if isinstance(item, ResponseFunctionToolCall):
-            debug_info["output_items"].append({
-                "index": idx,
-                "type": "ResponseFunctionToolCall",
-                "name": item.name,
-                "call_id": item.call_id,
-                "arguments": item.arguments,
-            })
-        elif isinstance(item, ResponseOutputMessage):
-            debug_info["output_items"].append({
-                "index": idx,
-                "type": "ResponseOutputMessage",
-                "role": getattr(item, "role", "unknown"),
-                "content": _extract_text(item),
-            })
-        else:
-            # For ResponseReasoningItem and other types, just note them
-            debug_info["output_items"].append({
-                "index": idx,
-                "type": type(item).__name__,
-                "note": f"Type: {type(item).__name__} (encrypted or non-text content)",
-                "has_attributes": list(vars(item).keys()) if hasattr(item, "__dict__") else "no __dict__",
-            })
-    
-    log_file.write_text(json.dumps(debug_info, indent=2, ensure_ascii=False), encoding="utf-8")
-    LOGGER.info(
-        "[%s] Response logged to %s (round %d, %d items)",
-        class_name,
-        log_file,
-        round_idx,
-        debug_info["output_length"]
-    )
-
-
-def _parse_record_instances(
-    call: ResponseFunctionToolCall,
-    model_cls: Type[BaseModel],
-    seen_hashes: Set[str],
-    stored: List[dict],
-) -> tuple[dict, bool]:
-    """
-    Apply a `record_instances` call.
-
-    Returns (result_payload, added_any).
-    """
-    try:
-        args = json.loads(call.arguments or "{}")
-    except json.JSONDecodeError as exc:
-        return {"status": "error", "message": f"Invalid JSON: {exc}"}, False
-
-    raw_items = args.get("items")
-    if not isinstance(raw_items, list):
-        return {"status": "error", "message": "Argument 'items' must be a list."}, False
-
-    accepted: list[dict] = []
-    errors: list[str] = []
-
-    for idx, raw in enumerate(raw_items):
-        if not isinstance(raw, dict):
-            errors.append(f"Item {idx} is not an object; received {type(raw).__name__}.")
-            continue
-        try:
-            normalized_raw = _auto_fill_missing_ids(raw, model_cls)
-            parsed = model_cls.model_validate(normalized_raw)
-            normalised = _to_json_ready(parsed)
-        except ValidationError as exc:
-            errors.append(f"Item {idx} failed validation: {exc}")
-            continue
-
-        key = json.dumps(normalised, sort_keys=True, ensure_ascii=False)
-        if key in seen_hashes:
-            errors.append(f"Item {idx} duplicates an existing entry; skipped.")
-            continue
-
-        seen_hashes.add(key)
-        stored.append(normalised)
-        accepted.append(normalised)
-
-    notes = args.get("source_notes")
-    result = {
-        "status": "ok" if not errors else "partial",
-        "accepted": len(accepted),
-        "errors": errors,
-        "total_stored": len(stored),
-    }
-    if notes:
-        result["source_notes"] = notes
-    return result, bool(accepted)
-
-
-def _handle_response_output(response: Response) -> tuple[list[ResponseFunctionToolCall], list[str]]:
-    tool_calls: list[ResponseFunctionToolCall] = []
-    assistant_texts: list[str] = []
-    for item in response.output or []:
-        if isinstance(item, ResponseFunctionToolCall):
-            tool_calls.append(item)
-        elif isinstance(item, ResponseOutputMessage):
-            assistant_texts.append(_extract_text(item))
-        # Skip ResponseReasoningItem and other non-output items
-    return tool_calls, assistant_texts
-
-
 def run_class_extraction(
     *,
     client: OpenAI,
@@ -361,36 +118,49 @@ def run_class_extraction(
     output_dir: Path,
     max_rounds: int,
 ) -> None:
+    """
+    Run extraction for a single Pydantic model class.
+    
+    Args:
+        client: OpenAI API client
+        model_name: LLM model to use
+        system_prompt: System instruction prompt
+        user_template: User message template
+        markdown_text: Markdown content to extract from
+        model_cls: Target Pydantic model class
+        output_dir: Directory for output JSON files
+        max_rounds: Maximum extraction rounds
+    """
     output_path = output_dir / f"{model_cls.__name__}.json"
-    stored_instances = _load_existing(output_path)
+    stored_instances = load_existing(output_path)
     seen_hashes = {json.dumps(entry, sort_keys=True, ensure_ascii=False) for entry in stored_instances}
 
-    class_context = _escape_braces(_load_class_context(model_cls.__name__))
+    class_context = escape_braces(load_class_context(model_cls.__name__))
     user_prompt = user_template.format(
         class_name=model_cls.__name__,
         class_context=class_context,
-        json_schema=_escape_braces(json.dumps(model_cls.model_json_schema(by_alias=True), indent=2)),
-        existing_summary=_escape_braces(_summarise_instances(stored_instances)),
-        markdown=_escape_braces(markdown_text),
+        json_schema=escape_braces(json.dumps(model_cls.model_json_schema(by_alias=True), indent=2)),
+        existing_summary=escape_braces(summarise_instances(stored_instances)),
+        markdown=escape_braces(markdown_text),
     )
 
     LOGGER.info("Starting extraction for %s (existing %d records).", model_cls.__name__, len(stored_instances))
-    response = client.responses.create(
+    response = client.responses.create(  # type: ignore
         model=model_name,
-        input=[{"role": "user", "content": user_prompt}],
+        input=[{"role": "user", "content": user_prompt}],  # type: ignore
         instructions=system_prompt,
-        tools=TOOLS,
+        tools=TOOLS,  # type: ignore
         tool_choice="required",
         parallel_tool_calls=True,
     )
 
     for round_idx in range(1, max_rounds + 1):
-        tool_calls, assistant_messages = _handle_response_output(response)
-        _log_response_preview(model_cls.__name__, assistant_messages, tool_calls)
+        tool_calls, assistant_messages = handle_response_output(response)
+        log_response_preview(model_cls.__name__, assistant_messages, tool_calls)
 
         if not tool_calls:
             # Log full response for debugging when no tool calls returned
-            _log_full_response(model_cls.__name__, response, round_idx)
+            log_full_response(model_cls.__name__, response, round_idx)
             LOGGER.warning(
                 "No tool calls returned for %s (round %d). Assistant said: %s",
                 model_cls.__name__,
@@ -400,17 +170,17 @@ def run_class_extraction(
             break
         else:
             # Also log successful responses for comparison
-            _log_full_response(model_cls.__name__, response, round_idx)
+            log_full_response(model_cls.__name__, response, round_idx)
 
         tool_outputs: list[dict] = []
         extracted_complete = False
 
         for call in tool_calls:
             if call.name == "record_instances":
-                payload, added = _parse_record_instances(call, model_cls, seen_hashes, stored_instances)
-                tool_outputs.append(_make_tool_output(call.call_id, payload))
+                payload, added = parse_record_instances(call, model_cls, seen_hashes, stored_instances)
+                tool_outputs.append(make_tool_output(call.call_id, payload))
                 if added:
-                    _persist_instances(output_path, stored_instances)
+                    persist_instances(output_path, stored_instances)
                     LOGGER.info(
                         "[%s] Stored %d total after record_instances.",
                         model_cls.__name__,
@@ -427,22 +197,22 @@ def run_class_extraction(
                     "stored": len(stored_instances),
                     "reason": reason,
                 }
-                tool_outputs.append(_make_tool_output(call.call_id, payload))
+                tool_outputs.append(make_tool_output(call.call_id, payload))
             else:
                 tool_outputs.append(
-                    _make_tool_output(call.call_id, {"status": "error", "message": f"Unknown tool {call.name}"})
+                    make_tool_output(call.call_id, {"status": "error", "message": f"Unknown tool {call.name}"})
                 )
 
         if not tool_outputs:
             LOGGER.warning("No tool outputs generated for %s; aborting loop.", model_cls.__name__)
             break
 
-        response = client.responses.create(
+        response = client.responses.create(  # type: ignore
             model=model_name,
             previous_response_id=response.id,
-            input=tool_outputs,
+            input=tool_outputs,  # type: ignore
             instructions=system_prompt,
-            tools=TOOLS,
+            tools=TOOLS,  # type: ignore
             tool_choice="required",
             parallel_tool_calls=True,
         )
@@ -453,10 +223,11 @@ def run_class_extraction(
     else:
         LOGGER.warning("Reached max rounds (%d) for %s.", max_rounds, model_cls.__name__)
 
-    _persist_instances(output_path, stored_instances)
+    persist_instances(output_path, stored_instances)
 
 
 def parse_args() -> argparse.Namespace:
+    """Parse command-line arguments."""
     parser = argparse.ArgumentParser(description="Extract Pydantic model instances from Markdown using OpenAI agents.")
     parser.add_argument("--markdown", required=True, type=Path, help="Path to the Markdown file to parse.")
     parser.add_argument(
@@ -467,14 +238,20 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--output-dir",
         type=Path,
-        default=DEFAULT_OUTPUT_DIR,
+        default=None,
         help="Directory to store JSON outputs (default: app/extraction/output).",
     )
     parser.add_argument(
         "--max-rounds",
         type=int,
-        default=12,
-        help="Maximum tool-calling rounds per class before stopping.",
+        default=None,
+        help="Maximum tool-calling rounds per class before stopping (overrides config.yaml if set).",
+    )
+    parser.add_argument(
+        "--token-limit",
+        type=int,
+        default=None,
+        help="Maximum token limit for markdown file (overrides config.yaml if set).",
     )
     parser.add_argument(
         "--timeout",
@@ -501,6 +278,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
+    """Main entry point for the extraction engine."""
     args = parse_args()
 
     logging.basicConfig(
@@ -513,30 +291,47 @@ def main() -> None:
     if not api_key:
         raise RuntimeError("OPENAI_API_KEY or OPENROUTER_API_KEY must be set.")
 
-    config = _load_config()
+    config = load_config()
+    
+    # Clean debug logs at startup if configured
+    clean_logs_on_start = config.get("clean_debug_logs_on_start", True)
+    if clean_logs_on_start:
+        clean_debug_logs()
+    
     model_name = args.model or config.get("model")
     if not model_name:
-        raise RuntimeError(f"Model must be specified in config.yaml at {CONFIG_PATH} (key: 'model')")
+        raise RuntimeError("Model must be specified in config.yaml or via --model CLI argument.")
     
-    LOGGER.info("Using model: %s", model_name)
+    # Get token limit from config or CLI override
+    token_limit = args.token_limit or config.get("token_limit", 900000)
+    
+    # Get max rounds from config or CLI override
+    max_rounds = args.max_rounds or config.get("max_rounds", 12)
+    
+    # Get output directory with proper default
+    output_dir = args.output_dir or Path(__file__).resolve().parent / "output"
+    
+    LOGGER.info("Using model: %s (token_limit: %d, max_rounds: %d)", model_name, token_limit, max_rounds)
     
     # Check for stray environment variables
     vision_model_env = os.getenv("VISION_MODEL")
     if vision_model_env:
         LOGGER.warning("VISION_MODEL environment variable is set to: %s (but not being used)", vision_model_env)
 
-    markdown_text = _load_markdown(args.markdown)
+    markdown_text = load_markdown(args.markdown)
 
     # Check token count
     enc = tiktoken.get_encoding("cl100k_base")
     token_count = len(enc.encode(markdown_text))
-    if token_count > 900000:
-        LOGGER.error("File too large: %d tokens (limit: 900000)", token_count)
-        print("file too large")
+    if token_count > token_limit:
+        LOGGER.error("File too large: %d tokens (limit: %d)", token_count, token_limit)
+        print(f"file too large: {token_count} tokens exceeds limit of {token_limit}")
         return
+    
+    LOGGER.info("File size OK: %d tokens (limit: %d)", token_count, token_limit)
 
-    system_prompt = _load_prompt("system.md")
-    user_template = _load_prompt("class_prompt.md")
+    system_prompt = load_prompt("system.md")
+    user_template = load_prompt("class_prompt.md")
 
     # Default to OpenRouter endpoint when using OPENROUTER_API_KEY and no base_url is provided.
     base_url = args.base_url or os.getenv("OPENAI_BASE_URL")
@@ -546,7 +341,7 @@ def main() -> None:
     client = OpenAI(api_key=api_key, base_url=base_url or None, timeout=args.timeout)
 
     models_module = importlib.import_module("app.database.models")
-    model_classes = _extract_model_classes(models_module)
+    model_classes = extract_model_classes(models_module)
     if args.class_names:
         wanted = set(args.class_names)
         model_classes = [cls for cls in model_classes if cls.__name__ in wanted]
@@ -566,8 +361,8 @@ def main() -> None:
             user_template=user_template,
             markdown_text=markdown_text,
             model_cls=model_cls,
-            output_dir=args.output_dir,
-            max_rounds=args.max_rounds,
+            output_dir=output_dir,
+            max_rounds=max_rounds,
         )
 
 
