@@ -12,7 +12,6 @@ import importlib
 import json
 import logging
 import os
-import sys
 from pathlib import Path
 from typing import Type
 
@@ -20,11 +19,6 @@ from dotenv import load_dotenv
 from openai import OpenAI
 import tiktoken
 from pydantic import BaseModel
-
-# Ensure the project root is on the import path when executed as a script
-ROOT_DIR = Path(__file__).resolve().parents[2]
-if str(ROOT_DIR) not in sys.path:
-    sys.path.append(str(ROOT_DIR))
 
 from app.extraction.utils import (
     load_config,
@@ -45,66 +39,12 @@ from app.extraction.utils import (
     log_response_preview,
     log_full_response,
 )
+from app.extraction.utils.tools import get_all_tools
 
 LOGGER = logging.getLogger(__name__)
 
-# Tool definitions for OpenAI API
-RECORD_TOOL = {
-    "type": "function",
-    "name": "record_instances",
-    "description": (
-        "Store one or more instances for the current Pydantic class. "
-        "Use the schema field names (aliases) as keys."
-    ),
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "items": {
-                "type": "array",
-                "description": (
-                    "List of objects for the current class, using alias field names."
-                ),
-                "items": {
-                    "type": "object",
-                    "description": "A single instance matching the current class schema.",
-                },
-                "minItems": 1,
-            },
-            "source_notes": {
-                "type": "string",
-                "description": (
-                    "Optional short note about how the values were derived or any uncertainty."
-                ),
-            },
-        },
-        "required": ["items"],
-        "additionalProperties": False,
-    },
-    "strict": True,
-}
-
-ALL_EXTRACTED_TOOL = {
-    "type": "function",
-    "name": "all_extracted",
-    "description": (
-        "Signal that every instance for the current class has been extracted "
-        "(call even if zero instances exist)."
-    ),
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "reason": {
-                "type": "string",
-                "description": "Why extraction is finished or why no instances were found.",
-            }
-        },
-        "required": ["reason"],
-        "additionalProperties": False,
-    },
-    "strict": True,
-}
-
-TOOLS = [RECORD_TOOL, ALL_EXTRACTED_TOOL]
+# Load tool definitions from tools module
+TOOLS = get_all_tools()
 
 
 def run_class_extraction(

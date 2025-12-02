@@ -103,7 +103,7 @@ class Initiative(BaseDBModel):
     description: str | None = Field(default=None, alias="description")
     start_year: int | None = Field(default=None, alias="startYear")
     end_year: int | None = Field(default=None, alias="endYear")
-    total_estimated_cost: int | None = Field(default=None, alias="totalEstimatedCost")
+    total_estimated_cost: int | None = Field(default=None, alias="total_estimated_cost")
     currency: str | None = Field(default=None, alias="currency")  # TODO: enum when vocabulary set
     status: str | None = Field(default=None, alias="status")  # TODO: enum when vocabulary set
     notes: str | None = Field(default=None, alias="notes")
@@ -166,6 +166,16 @@ class InitiativeIndicator(BaseDBModel):
     notes: str | None = Field(default=None, alias="notes")
 
 
-class PossiblyTEF(BaseDBModel):
-    id: UUID | None = Field(alias="id", default=None)
+class TefCategory(BaseDBModel):
+    tef_id: UUID | None = Field(alias="tefId", default=None)
+    parent_id: UUID | None = Field(default=None, alias="parentId")
+    code: str = Field(alias="code")
+    name: str = Field(alias="name")
+    description: str | None = Field(default=None, alias="description")
+
+
+class InitiativeTef(BaseDBModel):
+    initiative_tef_id: UUID | None = Field(alias="initiativeTefId", default=None)
     initiative_id: UUID | None = Field(alias="initiativeId", default=None)
+    tef_id: UUID | None = Field(alias="tefId", default=None)
+    notes: str | None = Field(default=None, alias="notes")
