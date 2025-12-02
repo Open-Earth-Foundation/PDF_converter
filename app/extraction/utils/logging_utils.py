@@ -88,7 +88,17 @@ def log_full_response(class_name: str, response: "Response", round_idx: int, con
                 "has_attributes": list(vars(item).keys()) if hasattr(item, "__dict__") else "no __dict__",
             })
     
-    log_file.write_text(json.dumps(debug_info, indent=2, ensure_ascii=False), encoding="utf-8")
+    try:
+        log_file.write_text(json.dumps(debug_info, indent=2, ensure_ascii=False), encoding="utf-8")
+    except (TypeError, ValueError) as e:
+        LOGGER.error(
+            "Failed to serialize debug_info for %s (round %d): %s\nProblematic data: %r",
+            class_name,
+            round_idx,
+            e,
+            debug_info,
+        )
+        return
     LOGGER.info(
         "[%s] Response logged to %s (round %d, %d items)",
         class_name,
