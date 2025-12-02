@@ -6,7 +6,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from openai.types.responses import ResponseFunctionToolCall, ResponseOutputMessage
-from openai.types.responses.response_output_text import ResponseOutputText
+
+from .data_utils import extract_text
 
 if TYPE_CHECKING:
     from openai.types.responses import Response
@@ -32,15 +33,6 @@ def log_response_preview(model_name: str, assistant_messages: list[str], tool_ca
     if tool_calls:
         names = [call.name for call in tool_calls]
         LOGGER.info("[%s] Tool calls: %s", model_name, ", ".join(names))
-
-
-def extract_text(output_message: ResponseOutputMessage) -> str:
-    """Extract text content from response message."""
-    parts: list[str] = []
-    for content in output_message.content:
-        if isinstance(content, ResponseOutputText):
-            parts.append(content.text)
-    return "\n".join(parts)
 
 
 def log_full_response(class_name: str, response: "Response", round_idx: int, config: dict | None = None) -> None:
