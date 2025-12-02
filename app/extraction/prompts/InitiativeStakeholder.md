@@ -1,5 +1,16 @@
 Context: Relationships between initiatives and stakeholders within the Climate City Contract.
 
-- Capture rows that pair a stakeholder to an initiative with a stated role (e.g., lead, partner, funder); include notes if present.
-- If IDs are missing, leave them blank (placeholders will be assigned). Skip only when neither initiative nor stakeholder can be identified.
-- Capture any additional useful information not covered by other fields in the `misc` field as a JSON object.
+**Available fields ONLY** (no other fields are permitted):
+
+- `initiativeStakeholderId`: UUID identifier (auto-generated if missing)
+- `initiativeId`: Initiative UUID reference (optional, auto-linked if context available)
+- `stakeholderId`: Stakeholder UUID reference (optional, auto-linked if context available)
+- `role`: Stakeholder role in initiative (e.g., "lead", "partner", "funder", "advisor", "implementer") - only if explicitly stated
+- `notes`: Catch-all field for any valuable insights (e.g., responsibilities, contribution level, engagement status, contact information) - USE THIS FIELD for anything meaningful not covered by other fields
+
+**Rules**:
+
+- Capture rows that pair a stakeholder to an initiative with a stated or implied role
+- Leave ID fields blank if not explicitly present (placeholders will be assigned)
+- Skip only when NEITHER initiative NOR stakeholder can be identified
+- Extract role descriptions exactly as stated in document

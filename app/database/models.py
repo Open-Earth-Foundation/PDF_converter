@@ -24,11 +24,11 @@ class ClimateCityContract(BaseDBModel):
     climate_city_contract_id: UUID | None = Field(alias="climateCityContractId", default=None)
     city_id: UUID | None = Field(alias="cityId", default=None)
     contract_date: datetime = Field(alias="contractDate")
-    title: str
-    version: str | None = None
+    title: str = Field(alias="title")
+    version: str | None = Field(default=None, alias="version")
     language: str | None = Field(default=None, alias="language")  # TODO: enum when vocabulary set
     document_url: str | None = Field(default=None, alias="documentUrl")
-    notes: str | None = None
+    notes: str | None = Field(default=None, alias="notes")
 
 
 class City(BaseDBModel):
@@ -103,7 +103,7 @@ class Initiative(BaseDBModel):
     description: str | None = Field(default=None, alias="description")
     start_year: int | None = Field(default=None, alias="startYear")
     end_year: int | None = Field(default=None, alias="endYear")
-    total_estimated_cost: int | None = Field(default=None, alias="total_estimated_cost")
+    total_estimated_cost: int | None = Field(default=None, alias="totalEstimatedCost")
     currency: str | None = Field(default=None, alias="currency")  # TODO: enum when vocabulary set
     status: str | None = Field(default=None, alias="status")  # TODO: enum when vocabulary set
     notes: str | None = Field(default=None, alias="notes")

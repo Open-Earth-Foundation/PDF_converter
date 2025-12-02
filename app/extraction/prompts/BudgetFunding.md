@@ -1,5 +1,17 @@
-Context: Extract budget funding sources and financed amounts (focus on capturing data now; linking can be resolved later).
+Context: Budget funding sources and amounts allocated to climate actions in the Climate City Contract.
 
-- Capture the funding source name, any type/description provided, the financed amount, and currency exactly as written.
-- Leave missing IDs blank (placeholders are assigned automatically). Do not skip rows just because IDs are absent.
-- Capture any additional useful information not covered by other fields in the `misc` field as a JSON object.
+**Available fields ONLY** (no other fields are permitted):
+
+- `budgetFundingId`: UUID identifier (auto-generated if missing)
+- `budgetId`: Budget UUID reference (optional, auto-linked if context available)
+- `fundingSourceId`: Funding source UUID reference (optional, auto-linked if context available)
+- `amount`: Funding amount as integer in smallest currency unit (REQUIRED)
+- `currency`: Currency code (e.g., "EUR", "USD") (REQUIRED)
+- `notes`: Catch-all field for any valuable insights (e.g., funding conditions, timeline, allocation rationale) - USE THIS FIELD for anything meaningful not covered by other fields
+
+**Rules**:
+
+- Extract funding amounts exactly as stated, convert to smallest currency unit if needed
+- Leave ID fields blank if not explicitly present (placeholders will be assigned)
+- Keep currency codes as written in document
+- Do NOT skip rows due to missing IDs
