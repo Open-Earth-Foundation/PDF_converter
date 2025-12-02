@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 LOGGER = logging.getLogger(__name__)
 
 LOG_SNIPPET_LEN = 320
-DEBUG_LOG_DIR = Path(__file__).resolve().parents[1] / "debug_logs"
+DEBUG_LOG_DIR = Path(__file__).resolve().parent.parent / "debug_logs"
 
 
 def truncate(text: str, limit: int = LOG_SNIPPET_LEN) -> str:

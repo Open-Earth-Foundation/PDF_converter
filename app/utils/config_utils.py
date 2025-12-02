@@ -7,9 +7,10 @@ import yaml
 
 LOGGER = logging.getLogger(__name__)
 
-PROMPTS_DIR = Path(__file__).resolve().parents[1] / "prompts"
-CONFIG_PATH = Path(__file__).resolve().parents[1] / "config.yaml"
-DEBUG_LOG_DIR = Path(__file__).resolve().parents[1] / "debug_logs"
+EXTRACTION_DIR = Path(__file__).resolve().parent.parent / "extraction"
+PROMPTS_DIR = EXTRACTION_DIR / "prompts"
+CONFIG_PATH = EXTRACTION_DIR / "config.yaml"
+DEBUG_LOG_DIR = EXTRACTION_DIR / "debug_logs"
 
 
 def load_prompt(name: str) -> str:

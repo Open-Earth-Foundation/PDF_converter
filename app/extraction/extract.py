@@ -20,7 +20,7 @@ from openai import OpenAI
 import tiktoken
 from pydantic import BaseModel
 
-from app.extraction.utils import (
+from app.utils import (
     load_config,
     load_prompt,
     load_class_context,
@@ -39,7 +39,7 @@ from app.extraction.utils import (
     log_response_preview,
     log_full_response,
 )
-from app.extraction.utils.tools import get_all_tools
+from app.extraction.tools import get_all_tools
 
 LOGGER = logging.getLogger(__name__)
 
@@ -93,7 +93,6 @@ def run_class_extraction(
         instructions=system_prompt,
         tools=TOOLS,  # type: ignore
         tool_choice="required",
-        parallel_tool_calls=True,
     )
 
     for round_idx in range(1, max_rounds + 1):
@@ -156,7 +155,6 @@ def run_class_extraction(
             instructions=system_prompt,
             tools=TOOLS,  # type: ignore
             tool_choice="required",
-            parallel_tool_calls=True,
         )
 
         if extracted_complete:
@@ -178,33 +176,16 @@ def parse_args() -> argparse.Namespace:
         help="OpenAI model to use for extraction (overrides config.yaml if set).",
     )
     parser.add_argument(
-        "--output-dir",
-        type=Path,
-        default=None,
-        help="Directory to store JSON outputs (default: app/extraction/output).",
-    )
-    parser.add_argument(
         "--max-rounds",
         type=int,
         default=None,
         help="Maximum tool-calling rounds per class before stopping (overrides config.yaml if set).",
     )
     parser.add_argument(
-        "--token-limit",
-        type=int,
-        default=None,
-        help="Maximum token limit for markdown file (overrides config.yaml if set).",
-    )
-    parser.add_argument(
         "--timeout",
         type=float,
         default=180.0,
         help="Request timeout in seconds (default: 180).",
-    )
-    parser.add_argument(
-        "--base-url",
-        default=os.getenv("OPENAI_BASE_URL"),
-        help="Optional OpenAI-compatible base URL (defaults to env OPENAI_BASE_URL).",
     )
     parser.add_argument(
         "--class-names",
@@ -244,14 +225,14 @@ def main() -> None:
     if not model_name:
         raise RuntimeError("Model must be specified in config.yaml or via --model CLI argument.")
     
-    # Get token limit from config or CLI override
-    token_limit = args.token_limit or config.get("token_limit", 900000)
+    # Get token limit from config
+    token_limit = config.get("token_limit", 900000)
     
     # Get max rounds from config or CLI override
     max_rounds = args.max_rounds or config.get("max_rounds", 12)
     
-    # Get output directory with proper default
-    output_dir = args.output_dir or Path(__file__).resolve().parent / "output"
+    # Output directory is always app/extraction/output
+    output_dir = Path(__file__).resolve().parent / "output"
     
     LOGGER.info("Using model: %s (token_limit: %d, max_rounds: %d)", model_name, token_limit, max_rounds)
     
@@ -274,8 +255,8 @@ def main() -> None:
     system_prompt = load_prompt("system.md")
     user_template = load_prompt("class_prompt.md")
 
-    # Default to OpenRouter endpoint when using OPENROUTER_API_KEY and no base_url is provided.
-    base_url = args.base_url or os.getenv("OPENAI_BASE_URL")
+    # Get base_url from config, environment, or default to OpenRouter
+    base_url = config.get("base_url") or os.getenv("OPENAI_BASE_URL")
     if not base_url and os.getenv("OPENROUTER_API_KEY"):
         base_url = "https://openrouter.ai/api/v1"
 

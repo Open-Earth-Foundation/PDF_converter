@@ -7,7 +7,7 @@ from typing import Sequence
 
 LOGGER = logging.getLogger(__name__)
 
-DEFAULT_OUTPUT_DIR = Path(__file__).resolve().parents[1] / "output"
+DEFAULT_OUTPUT_DIR = Path(__file__).resolve().parent.parent / "output"
 
 
 def load_markdown(markdown_path: Path) -> str:
