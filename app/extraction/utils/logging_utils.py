@@ -42,7 +42,7 @@ def log_full_response(class_name: str, response: "Response", round_idx: int, con
         class_name: Name of the class being extracted.
         response: The response object from OpenAI.
         round_idx: The current round index.
-        config: Configuration dict. If provided, checks debug_logs_enabled setting.
+        config: Configuration dict. If provided, checks debug_logs_enabled setting; if None, debug logging proceeds by default.
     """
     # Check if debug logging is enabled in config
     if config is not None:
