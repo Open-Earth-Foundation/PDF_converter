@@ -15,9 +15,10 @@ from .models import (
     Initiative,
     InitiativeIndicator,
     InitiativeStakeholder,
-    PossiblyTEF,
+    InitiativeTef,
     Sector,
     Stakeholder,
+    TefCategory,
 )
 
 __all__ = [
@@ -35,7 +36,8 @@ __all__ = [
     "Initiative",
     "InitiativeIndicator",
     "InitiativeStakeholder",
-    "PossiblyTEF",
+    "InitiativeTef",
     "Sector",
     "Stakeholder",
+    "TefCategory",
 ]
