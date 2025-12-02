@@ -65,7 +65,7 @@ def extract_model_classes(models_module) -> list[Type[BaseModel]]:
 
 def to_json_ready(model_obj: BaseModel) -> dict:
     """Convert Pydantic model to JSON-serialisable dict using field aliases."""
-    return json.loads(model_obj.model_dump_json(by_alias=True))
+    return model_obj.model_dump(mode='json', by_alias=True)
 
 
 def summarise_instances(instances: Sequence[dict], max_items: int = 3) -> str:
