@@ -327,7 +327,6 @@ def main() -> None:
     token_count = len(enc.encode(markdown_text))
     if token_count > token_limit:
         LOGGER.error("File too large: %d tokens (limit: %d)", token_count, token_limit)
-        LOGGER.error("file too large: %d tokens exceeds limit of %d", token_count, token_limit)
         return
     
     LOGGER.info("File size OK: %d tokens (limit: %d)", token_count, token_limit)
