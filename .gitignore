@@ -14,3 +14,4 @@ documents/
 # output
 output/
 app/debug_logs/
+app/mapping/workflow_output/
