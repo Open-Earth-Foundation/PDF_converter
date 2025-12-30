@@ -9,9 +9,16 @@ __pycache__/
 .venv
 
 # documents
-documents/
+documents/*
 
 # output
 output/
+pdf2markdown/output/
+pdf2markdown/mistral_OCR/
+extraction/output/
+extraction/debug_logs/
 app/debug_logs/
-app/mapping/workflow_output/
+app/mapping/output/
+mapping/debug_logs/
+mapping/workflow_output/
+mapping/output/
