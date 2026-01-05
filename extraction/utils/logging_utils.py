@@ -35,75 +35,98 @@ def log_response_preview(model_name: str, assistant_messages: list[str], tool_ca
         LOGGER.info("[%s] Tool calls: %s", model_name, ", ".join(names))
 
 
-def log_full_response(class_name: str, response: "Response", round_idx: int, config: dict | None = None) -> None:
-    """Write full response to a debug log file for inspection.
-    
-    Args:
-        class_name: Name of the class being extracted.
-        response: The response object from OpenAI.
-        round_idx: The current round index.
-        config: Configuration dict. If provided, checks debug_logs_enabled setting; if None, debug logging proceeds by default.
-    """
-    # Check if debug logging is enabled in config
-    if config is not None:
-        if not config.get("debug_logs_enabled", True):
-            LOGGER.debug("Debug logging disabled; skipping full response log for %s (round %d)", class_name, round_idx)
-            return
-    
+def log_full_response(class_name: str, response: object, round_idx: int, config: dict | None = None) -> None:
+    """Write full response to a debug log file for inspection."""
+    if config is not None and not config.get("debug_logs_enabled", True):
+        LOGGER.debug("Debug logging disabled; skipping full response log for %s (round %d)", class_name, round_idx)
+        return
+
     DEBUG_LOG_DIR.mkdir(parents=True, exist_ok=True)
     log_file = DEBUG_LOG_DIR / f"{class_name}_round{round_idx}.json"
-    
+
     debug_info = {
-        "response_id": response.id,
+        "response_id": getattr(response, "id", None),
         "model": getattr(response, "model", None),
         "status": getattr(response, "status", None),
-        "has_output_field": hasattr(response, "output"),
-        "output_length": len(response.output) if hasattr(response, "output") and response.output else 0,
         "output_items": [],
     }
-    
-    # Parse each item in response.output
-    for idx, item in enumerate(response.output or []):
-        if isinstance(item, ResponseFunctionToolCall):
-            debug_info["output_items"].append({
-                "index": idx,
-                "type": "ResponseFunctionToolCall",
-                "name": item.name,
-                "call_id": item.call_id,
-                "arguments": item.arguments,
-            })
-        elif isinstance(item, ResponseOutputMessage):
-            debug_info["output_items"].append({
-                "index": idx,
-                "type": "ResponseOutputMessage",
-                "role": getattr(item, "role", "unknown"),
-                "content": extract_text(item),
-            })
+
+    # Responses API
+    if hasattr(response, "output"):
+        output_items = getattr(response, "output") or []
+        debug_info["output_length"] = len(output_items)
+        for idx, item in enumerate(output_items):
+            if isinstance(item, ResponseFunctionToolCall):
+                debug_info["output_items"].append(
+                    {
+                        "index": idx,
+                        "type": "ResponseFunctionToolCall",
+                        "name": item.name,
+                        "call_id": item.call_id,
+                        "arguments": item.arguments,
+                    }
+                )
+            elif isinstance(item, ResponseOutputMessage):
+                debug_info["output_items"].append(
+                    {
+                        "index": idx,
+                        "type": "ResponseOutputMessage",
+                        "role": getattr(item, "role", "unknown"),
+                        "content": extract_text(item),
+                    }
+                )
+            else:
+                debug_info["output_items"].append(
+                    {
+                        "index": idx,
+                        "type": type(item).__name__,
+                        "note": f"Type: {type(item).__name__} (encrypted or non-text content)",
+                        "has_attributes": list(vars(item).keys()) if hasattr(item, "__dict__") else "no __dict__",
+                    }
+                )
+    # chat.completions API
+    elif hasattr(response, "choices"):
+        choices = getattr(response, "choices") or []
+        if not choices:
+            debug_info["output_length"] = 0
+            debug_info["assistant_content"] = None
         else:
-            # For ResponseReasoningItem and other types, just note them
-            debug_info["output_items"].append({
-                "index": idx,
-                "type": type(item).__name__,
-                "note": f"Type: {type(item).__name__} (encrypted or non-text content)",
-                "has_attributes": list(vars(item).keys()) if hasattr(item, "__dict__") else "no __dict__",
-            })
-    
+            choice = choices[0]
+            message = getattr(choice, "message", None)
+            tool_calls = getattr(message, "tool_calls", None) if message else None
+            debug_info["output_length"] = len(tool_calls or [])
+            debug_info["assistant_content"] = getattr(message, "content", None) if message else None
+            if tool_calls:
+                for idx, tc in enumerate(tool_calls):
+                    debug_info["output_items"].append(
+                        {
+                            "index": idx,
+                            "type": "ChatCompletionToolCall",
+                            "id": tc.id,
+                            "name": tc.function.name,
+                            "arguments": tc.function.arguments,
+                        }
+                    )
+    else:
+        debug_info["output_length"] = 0
+
     try:
         log_file.write_text(json.dumps(debug_info, indent=2, ensure_ascii=False), encoding="utf-8")
-    except (TypeError, ValueError) as e:
+    except (TypeError, ValueError) as exc:
         LOGGER.error(
             "Failed to serialize debug_info for %s (round %d): %s\nProblematic data: %r",
             class_name,
             round_idx,
-            e,
+            exc,
             debug_info,
         )
         return
+
     LOGGER.info(
         "[%s] Response logged to %s (round %d, %d items)",
         class_name,
         log_file,
         round_idx,
-        debug_info["output_length"]
+        debug_info.get("output_length", 0),
     )
 

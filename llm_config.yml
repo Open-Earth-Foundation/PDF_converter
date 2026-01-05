@@ -1,11 +1,11 @@
 pdf2markdown:
-  model: anthropic/claude-haiku-4.5
+  model: google/gemini-3-flash-preview
   temperature: 0.1
 
 extraction:
-  model: anthropic/claude-haiku-4.5
+  model: deepseek/deepseek-v3.2
   temperature: 0.1
 
 mapping:
-  model: anthropic/claude-haiku-4.5
+  model: google/gemini-3-flash-preview
   temperature: 0.1

@@ -11,7 +11,7 @@ __pycache__/
 # documents
 documents/*
 
-# output
+# Centralized output folder (all stages)
 output/
 pdf2markdown/output/
 pdf2markdown/mistral_OCR/
@@ -22,3 +22,4 @@ app/mapping/output/
 mapping/debug_logs/
 mapping/workflow_output/
 mapping/output/
+test_outputs/

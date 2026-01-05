@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Type
 
 from dotenv import load_dotenv
-from openai import OpenAI
+from openai import OpenAI, APIStatusError
 import tiktoken
 from pydantic import BaseModel
 
@@ -38,11 +38,8 @@ from extraction.utils import (
     extract_model_classes,
     to_json_ready,
     summarise_instances,
-    make_tool_output,
     parse_record_instances,
-    handle_response_output,
     truncate,
-    log_response_preview,
     log_full_response,
 )
 from extraction.tools import get_all_tools
@@ -66,18 +63,9 @@ def run_class_extraction(
     config: dict | None = None,
 ) -> None:
     """
-    Run extraction for a single Pydantic model class.
-    
-    Args:
-        client: OpenAI API client
-        model_name: LLM model to use
-        system_prompt: System instruction prompt
-        user_template: User message template
-        markdown_text: Markdown content to extract from
-        model_cls: Target Pydantic model class
-        output_dir: Directory for output JSON files
-        max_rounds: Maximum extraction rounds
-        config: Configuration dict containing debug settings
+    Run extraction for a single Pydantic model class using chat.completions with tools.
+
+    Args mirror the CLI entry point.
     """
     output_path = output_dir / f"{model_cls.__name__}.json"
     stored_instances = load_existing(output_path)
@@ -93,39 +81,86 @@ def run_class_extraction(
     )
 
     LOGGER.info("Starting extraction for %s (existing %d records).", model_cls.__name__, len(stored_instances))
-    response = client.responses.create(  # type: ignore
-        model=model_name,
-        input=[{"role": "user", "content": user_prompt}],  # type: ignore
-        instructions=system_prompt,
-        tools=TOOLS,  # type: ignore
-        tool_choice="required",
-    )
+    messages: list[dict] = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_prompt},
+    ]
 
     for round_idx in range(1, max_rounds + 1):
-        tool_calls, assistant_messages = handle_response_output(response)
-        log_response_preview(model_cls.__name__, assistant_messages, tool_calls)
+        try:
+            response = client.chat.completions.create(
+                model=model_name,
+                messages=messages,
+                tools=TOOLS,
+                tool_choice="required",
+            )
+        except APIStatusError as exc:
+            if getattr(exc, "status_code", None) == 404 and "tool_choice" in str(exc).lower():
+                LOGGER.warning(
+                    "tool_choice='required' not supported by model %s; retrying with tool_choice='auto'.",
+                    model_name,
+                )
+                response = client.chat.completions.create(
+                    model=model_name,
+                    messages=messages,
+                    tools=TOOLS,
+                    tool_choice="auto",
+                )
+            else:
+                raise
 
+        if not getattr(response, "choices", None):
+            LOGGER.warning(
+                "No choices returned for %s (round %d); aborting extraction.",
+                model_cls.__name__,
+                round_idx,
+            )
+            break
+
+        # Persist full raw response for debugging (works for chat.completions too)
+        log_full_response(model_cls.__name__, response, round_idx, config)
+
+        choice = response.choices[0].message
+        tool_calls = choice.tool_calls or []
         if not tool_calls:
-            # Log full response for debugging when no tool calls returned
-            log_full_response(model_cls.__name__, response, round_idx, config)
+            preview_text = truncate(choice.content or "", 160) if choice.content else "(no text)"
             LOGGER.warning(
                 "No tool calls returned for %s (round %d). Assistant said: %s",
                 model_cls.__name__,
                 round_idx,
-                " | ".join(assistant_messages) if assistant_messages else "(no text)"
+                preview_text,
             )
             break
-        else:
-            # Also log successful responses for comparison
-            log_full_response(model_cls.__name__, response, round_idx, config)
 
-        tool_outputs: list[dict] = []
+        # Keep conversation history by adding the assistant turn with tool calls
+        messages.append(
+            {
+                "role": "assistant",
+                "content": choice.content or "",
+                "tool_calls": [
+                    {
+                        "id": tc.id,
+                        "type": tc.type,
+                        "function": {
+                            "name": tc.function.name,
+                            "arguments": tc.function.arguments,
+                        },
+                    }
+                    for tc in tool_calls
+                ],
+            }
+        )
+
         extracted_complete = False
+        tool_messages: list[dict] = []
 
-        for call in tool_calls:
-            if call.name == "record_instances":
-                payload, added = parse_record_instances(call, model_cls, seen_hashes, stored_instances)
-                tool_outputs.append(make_tool_output(call.call_id, payload))
+        for tc in tool_calls:
+            name = tc.function.name
+            args = tc.function.arguments or "{}"
+            fake_call = type("ToolCall", (), {"name": name, "arguments": args, "call_id": tc.id})
+
+            if name == "record_instances":
+                payload, added = parse_record_instances(fake_call, model_cls, seen_hashes, stored_instances)
                 if added:
                     persist_instances(output_path, stored_instances)
                     LOGGER.info(
@@ -133,35 +168,30 @@ def run_class_extraction(
                         model_cls.__name__,
                         len(stored_instances),
                     )
-            elif call.name == "all_extracted":
+            elif name == "all_extracted":
                 extracted_complete = True
                 try:
-                    reason = json.loads(call.arguments or "{}").get("reason", "completed")
+                    reason = json.loads(args or "{}").get("reason", "completed")
                 except json.JSONDecodeError:
                     reason = "completed"
-                payload = {
-                    "status": "done",
-                    "stored": len(stored_instances),
-                    "reason": reason,
-                }
-                tool_outputs.append(make_tool_output(call.call_id, payload))
+                payload = {"status": "done", "stored": len(stored_instances), "reason": reason}
             else:
-                tool_outputs.append(
-                    make_tool_output(call.call_id, {"status": "error", "message": f"Unknown tool {call.name}"})
-                )
+                payload = {"status": "error", "message": f"Unknown tool {name}"}
 
-        if not tool_outputs:
+            tool_messages.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": tc.id,
+                    "name": name,
+                    "content": json.dumps(payload),
+                }
+            )
+
+        if not tool_messages:
             LOGGER.warning("No tool outputs generated for %s; aborting loop.", model_cls.__name__)
             break
 
-        response = client.responses.create(  # type: ignore
-            model=model_name,
-            previous_response_id=response.id,
-            input=tool_outputs,  # type: ignore
-            instructions=system_prompt,
-            tools=TOOLS,  # type: ignore
-            tool_choice="required",
-        )
+        messages.extend(tool_messages)
 
         if extracted_complete:
             LOGGER.info("Model signalled completion for %s.", model_cls.__name__)

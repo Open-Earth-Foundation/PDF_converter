@@ -53,15 +53,19 @@ def main() -> int:
 
     repo_root = Path(__file__).resolve().parent
     documents_dir = repo_root / "documents"
-    pdf_output_root = repo_root / "pdf2markdown" / "output"
-    extraction_output_dir = repo_root / "extraction" / "output"
-    mapping_work_dir = repo_root / "mapping" / "workflow_output"
+    # Unified output directory at root level
+    output_root = repo_root / "output"
+    pdf_output_root = output_root / "pdf2markdown"
+    extraction_output_dir = output_root / "extraction"
+    mapping_work_dir = output_root / "mapping"
 
     pdfs = find_pdfs(documents_dir)
     if not pdfs:
         print("No PDFs found in documents/. Nothing to do.")
         return 0
 
+    # Create unified output structure
+    output_root.mkdir(parents=True, exist_ok=True)
     pdf_output_root.mkdir(parents=True, exist_ok=True)
     extraction_output_dir.mkdir(parents=True, exist_ok=True)
     mapping_work_dir.mkdir(parents=True, exist_ok=True)
@@ -80,15 +84,21 @@ def main() -> int:
             ]
         )
         if code != 0:
-            print(f"Conversion failed for {pdf_path.name} (exit {code}); skipping extraction.")
+            print(
+                f"Conversion failed for {pdf_path.name} (exit {code}); skipping extraction."
+            )
             continue
 
         markdown_path = find_latest_markdown(pdf_output_root, pdf_path.stem)
         if not markdown_path:
-            print(f"Could not locate combined_markdown.md for {pdf_path.name}; skipping extraction.")
+            print(
+                f"Could not locate combined_markdown.md for {pdf_path.name}; skipping extraction."
+            )
             continue
 
-        print(f"[2/2] Extracting structured data from {markdown_path.relative_to(repo_root)}")
+        print(
+            f"[2/2] Extracting structured data from {markdown_path.relative_to(repo_root)}"
+        )
         code = run_cmd(
             [
                 sys.executable,
