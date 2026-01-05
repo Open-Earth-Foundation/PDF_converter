@@ -10,34 +10,66 @@ Production pipeline: **PDF → Markdown → Structured Data → Linked Records**
 
 ## Quick Start
 
-### One-Command Full Pipeline
+### Full Pipeline (Default)
 
 ```bash
 python run_pipeline.py
 ```
 
-Processes all PDFs in `documents/` through all three stages. **All output saved to `output/` folder at root.**
+Processes all PDFs in `documents/` through all three stages. All output saved to `output/` folder.
 
-**Output structure:**
+### Command Options
+
+**Single PDF with vision refinement:**
+
+```bash
+python run_pipeline.py --input documents/ccc_dresden.pdf
+```
+
+**OCR only (no vision refinement - faster):**
+
+```bash
+python run_pipeline.py --no-vision
+```
+
+**Single PDF + OCR only (fastest for testing):**
+
+```bash
+python run_pipeline.py --input documents/ccc_dresden.pdf --no-vision
+```
+
+**Skip mapping stage:**
+
+```bash
+python run_pipeline.py --no-mapping
+```
+
+**Help:**
+
+```bash
+python run_pipeline.py --help
+```
+
+### Typical Workflow
+
+```bash
+# 1. Test single file with OCR only (~10-15 min for 35MB)
+python run_pipeline.py --input documents/ccc_dresden.pdf --no-vision
+
+# 2. If OK, full pipeline with vision (~25-35 min)
+python run_pipeline.py --input documents/ccc_dresden.pdf
+
+# 3. If working, process all PDFs
+python run_pipeline.py
+```
+
+### Output Structure
 
 ```
 output/
 ├── pdf2markdown/          # Markdown files (TIMESTAMP_docname/)
-├── extraction/            # Extracted JSON (City.json, Initiative.json, etc.)
+├── extraction/            # Extracted JSON (all classes)
 └── mapping/               # Linked records
-```
-
-### Stage-by-Stage Commands
-
-```bash
-# PDF to Markdown (output to output/pdf2markdown/)
-python -m pdf2markdown.pdf_to_markdown --input documents/sample.pdf --output-dir output/pdf2markdown
-
-# Extract structured data (output to output/extraction/)
-python -m extraction.scripts.extract --markdown output/pdf2markdown/TIMESTAMP_doc/combined_markdown.md --output-dir output/extraction
-
-# Map foreign keys (output to output/mapping/)
-python -m mapping.mapping --input output/extraction --output-dir output/mapping --apply
 ```
 
 ---
