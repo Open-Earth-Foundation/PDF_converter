@@ -339,7 +339,7 @@ def main() -> None:
         timeout=args.timeout,
     )
 
-    models_module = importlib.import_module("database.models")
+    models_module = importlib.import_module("database.schemas")
     model_classes = extract_model_classes(models_module)
     if args.class_names:
         wanted = set(args.class_names)

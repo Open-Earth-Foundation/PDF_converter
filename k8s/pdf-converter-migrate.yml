@@ -1,0 +1,25 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: pdf-converter-migrate
+  namespace: default
+spec:
+  backoffLimit: 3
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: migrate
+          image: ghcr.io/open-earth-foundation/pdf-converter:latest
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: pdf-converter-db-configmap
+                  key: DATABASE_URL
+          command: ["bash", "-lc"]
+          args:
+            - |
+              echo "Running database migrations..."
+              python migrate.py upgrade head
+              echo "Done."

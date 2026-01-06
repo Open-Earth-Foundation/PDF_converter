@@ -7,3 +7,6 @@ openai>=1.0.0
 langchain-core>=0.1.0
 PyYAML>=6.0.1
 tiktoken>=0.7.0
+SQLAlchemy>=2.0
+alembic>=1.13
+psycopg[binary]>=3.1

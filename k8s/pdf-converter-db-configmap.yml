@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pdf-converter-db-configmap
+  namespace: default
+data:
+  DB_HOST: "your-db-host"
+  DB_PORT: "5432"
+  DB_USER: "pdf_user"
+  DB_PASSWORD: "pdf_pass"
+  DB_NAME: "pdf_converter"
+  DB_URL: "postgresql+psycopg://pdf_user:pdf_pass@your-db-host:5432/pdf_converter"
+  DATABASE_URL: "postgresql+psycopg://pdf_user:pdf_pass@your-db-host:5432/pdf_converter"
