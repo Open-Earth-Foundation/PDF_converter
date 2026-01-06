@@ -16,7 +16,7 @@ def _repo_root() -> Path:
 
 
 @pytest.mark.integration
-def test_extraction_missing_tables_have_records(tmp_path: Path) -> None:
+def test_extraction_missing_tables_have_records() -> None:
     """
     Integration smoke test: run extraction only for the previously empty tables
     using the checked-in combined_markdown sample, and assert we get data.
@@ -30,7 +30,8 @@ def test_extraction_missing_tables_have_records(tmp_path: Path) -> None:
     markdown_path = repo_root / "tests" / "testdocs" / "combined_markdown.md"
     assert markdown_path.exists(), "Sample markdown missing at tests/testdocs/combined_markdown.md"
 
-    output_dir = tmp_path / "extraction_output"
+    output_dir = repo_root / "output" / "test_extraction_missing_tables"
+    output_dir.mkdir(parents=True, exist_ok=True)
     cmd = [
         sys.executable,
         "-m",
