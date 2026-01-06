@@ -41,6 +41,8 @@ from extraction.utils import (
     parse_record_instances,
     truncate,
     log_full_response,
+    select_provider,
+    apply_default_provider,
 )
 from extraction.tools import get_all_tools
 
@@ -54,6 +56,7 @@ def run_class_extraction(
     *,
     client: OpenAI,
     model_name: str,
+    extra_body: dict | None,
     system_prompt: str,
     user_template: str,
     markdown_text: str,
@@ -70,6 +73,7 @@ def run_class_extraction(
     output_path = output_dir / f"{model_cls.__name__}.json"
     stored_instances = load_existing(output_path)
     seen_hashes = {json.dumps(entry, sort_keys=True, ensure_ascii=False) for entry in stored_instances}
+    base_extra_body = dict(extra_body or {})
 
     class_context = escape_braces(load_class_context(model_cls.__name__))
     user_prompt = user_template.format(
@@ -93,18 +97,30 @@ def run_class_extraction(
                 messages=messages,
                 tools=TOOLS,
                 tool_choice="required",
+                extra_body=base_extra_body or None,
             )
         except APIStatusError as exc:
-            if getattr(exc, "status_code", None) == 404 and "tool_choice" in str(exc).lower():
+            err_text = str(exc).lower()
+            is_404 = getattr(exc, "status_code", None) == 404
+            supports_tool_msg = "support tool use" in err_text
+            tool_choice_msg = "tool_choice" in err_text
+
+            if is_404 and (supports_tool_msg or tool_choice_msg):
+                fallback_body = apply_default_provider(model_name, base_extra_body)
+                added_provider = fallback_body.get("provider") != (base_extra_body.get("provider") if base_extra_body else None)
+                fallback_choice = "auto" if tool_choice_msg else "required"
                 LOGGER.warning(
-                    "tool_choice='required' not supported by model %s; retrying with tool_choice='auto'.",
+                    "Received 404 for tool use on %s; retrying with tool_choice='%s'%s.",
                     model_name,
+                    fallback_choice,
+                    f" and provider={fallback_body.get('provider')}" if added_provider else "",
                 )
                 response = client.chat.completions.create(
                     model=model_name,
                     messages=messages,
                     tools=TOOLS,
-                    tool_choice="auto",
+                    tool_choice=fallback_choice,
+                    extra_body=fallback_body or None,
                 )
             else:
                 raise
@@ -267,6 +283,13 @@ def main() -> None:
     model_name = args.model or llm_cfg.get("model") or config.get("model")
     if not model_name:
         raise RuntimeError("Model must be specified in llm_config.yml, config.yaml, or via --model CLI argument.")
+
+    # Optional provider override (useful for OpenRouter when only specific providers support tools)
+    provider = select_provider(llm_cfg, config, env_prefix="EXTRACTION")
+    if provider and not isinstance(provider, dict):
+        LOGGER.warning("Ignoring provider override because it must be a mapping; got %r", provider)
+        provider = None
+    extra_body = {"provider": provider} if provider else None
     
     # Get token limit from config
     token_limit = config.get("token_limit", 900000)
@@ -277,7 +300,14 @@ def main() -> None:
     # Output directory (CLI override)
     output_dir = args.output_dir or Path(__file__).resolve().parent / "output"
     
-    LOGGER.info("Using model: %s (token_limit: %d, max_rounds: %d)", model_name, token_limit, max_rounds)
+    provider_label = provider or "auto (router)"
+    LOGGER.info(
+        "Using model: %s (token_limit: %d, max_rounds: %d, provider: %s)",
+        model_name,
+        token_limit,
+        max_rounds,
+        provider_label,
+    )
     
     # Check for stray environment variables
     vision_model_env = os.getenv("VISION_MODEL")
@@ -326,6 +356,7 @@ def main() -> None:
         run_class_extraction(
             client=client,
             model_name=model_name,
+            extra_body=extra_body,
             system_prompt=system_prompt,
             user_template=user_template,
             markdown_text=markdown_text,

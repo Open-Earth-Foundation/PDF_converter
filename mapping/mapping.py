@@ -21,7 +21,7 @@ from typing import Iterable
 
 from dotenv import load_dotenv
 
-from mapping.utils import CANONICAL_CITY_ID, FK_FIELDS, clear_fields, write_json
+from mapping.utils import FK_FIELDS, clear_fields, write_json
 from mapping.utils.apply_llm_mapping import run_llm_mapping
 from mapping.utils.apply_city_mapping import (
     apply_city_fk,
@@ -110,16 +110,21 @@ def clear_fk_step(input_dir: Path, output_dir: Path) -> dict:
     return summary
 
 
-def city_step(input_dir: Path, output_dir: Path) -> dict:
+def city_step(input_dir: Path, output_dir: Path) -> tuple[dict, str]:
     """Apply canonical city mapping on cleared data."""
     summary: dict[str, dict] = {}
 
     city_records, city_status = load_json_list(input_dir / "City.json")
     if city_status not in ("ok", "missing"):
         raise ValueError(f"Invalid City.json: {city_status}")
-    city_record = build_city_record(city_records[0] if city_records else None)
+    city_record, canonical_city_id = build_city_record(city_records[0] if city_records else None)
     write_city_json(output_dir / "City.json", [city_record])
-    summary["City.json"] = {"records": len(city_records or []), "updated": 1, "status": city_status}
+    summary["City.json"] = {
+        "records": len(city_records or []),
+        "updated": 1,
+        "status": city_status,
+        "canonical_city_id": canonical_city_id,
+    }
 
     for src in input_dir.glob("*.json"):
         if src.name == "City.json":
@@ -133,13 +138,13 @@ def city_step(input_dir: Path, output_dir: Path) -> dict:
 
         updated = 0
         if src.name in CITY_ID_FIELDS:
-            updated = apply_city_fk(records, CITY_ID_FIELDS[src.name])
+            updated = apply_city_fk(records, CITY_ID_FIELDS[src.name], canonical_city_id)
         write_city_json(output_dir / src.name, records)
         summary[src.name] = {"records": len(records), "updated": updated, "status": status}
-    return summary
+    return summary, canonical_city_id
 
 
-def verify_city_ids(path: Path) -> dict[str, dict]:
+def verify_city_ids(path: Path, canonical_city_id: str) -> dict[str, dict]:
     """Check that cityId equals canonical across city-linked files."""
     report: dict[str, dict] = {}
     for fname, fields in CITY_ID_FIELDS.items():
@@ -150,7 +155,7 @@ def verify_city_ids(path: Path) -> dict[str, dict]:
         missing = 0
         for rec in records:
             for field in fields:
-                if rec.get(field) != CANONICAL_CITY_ID:
+                if rec.get(field) != canonical_city_id:
                     missing += 1
         report[fname] = {"records": len(records), "cityId_mismatch": missing}
     return report
@@ -245,8 +250,8 @@ def main() -> None:
             print(f"  {fname}: records={stats['records']}, fields_cleared={stats.get('cleared', 0)}")
 
         # Step 2: apply city mapping
-        city_summary = city_step(clear_dir, city_dir)
-        city_verification = verify_city_ids(city_dir)
+        city_summary, canonical_city_id = city_step(clear_dir, city_dir)
+        city_verification = verify_city_ids(city_dir, canonical_city_id)
         print("\nStep 2 - city mapping applied:")
         for fname, stats in city_summary.items():
             extra = city_verification.get(fname, {})

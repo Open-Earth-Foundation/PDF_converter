@@ -15,6 +15,7 @@ from extraction.utils.data_utils import (
     handle_response_output,
 )
 from extraction.utils.logging_utils import truncate, log_response_preview, log_full_response
+from extraction.utils.provider_utils import select_provider, apply_default_provider
 
 __all__ = [
     # config
@@ -42,4 +43,7 @@ __all__ = [
     "truncate",
     "log_response_preview",
     "log_full_response",
+    # provider handling
+    "select_provider",
+    "apply_default_provider",
 ]

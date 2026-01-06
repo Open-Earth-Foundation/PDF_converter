@@ -138,7 +138,7 @@ def main() -> int:
 
         # Add vision model flag if --no-vision is set
         if args.no_vision:
-            cmd.extend(["--vision-model", ""])
+            cmd.extend(["--vision-model", "none"])
 
         code = run_cmd(cmd)
         if code != 0:

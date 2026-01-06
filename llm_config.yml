@@ -3,7 +3,7 @@ pdf2markdown:
   temperature: 0.1
 
 extraction:
-  model: deepseek/deepseek-v3.2
+  model: openai/gpt-5-mini
   temperature: 0.1
 
 mapping:

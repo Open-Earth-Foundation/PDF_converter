@@ -12,8 +12,8 @@ import logging
 from pathlib import Path
 from typing import Any, Iterable
 
-CANONICAL_CITY_ID = "b1f03c92-6f8a-4f27-bf5a-c1d58ddc3e17"
 LOGGER = logging.getLogger(__name__)
+_CANONICAL_CITY_ID: str | None = None
 
 # Track unmapped records for reporting
 UNMAPPED_RECORDS: dict[str, list[dict]] = {}
@@ -49,13 +49,35 @@ def write_json(path: Path, payload: list[dict]) -> None:
     path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
 
 
-def set_city_id(records: list[dict], fields: Iterable[str]) -> int:
-    """Set canonical cityId across given fields; return count updated."""
+def set_canonical_city_id(city_id: str | None) -> None:
+    """Set global canonical cityId for mapping helpers."""
+    global _CANONICAL_CITY_ID
+    _CANONICAL_CITY_ID = city_id
+
+
+def set_city_id(records: list[dict], fields: Iterable[str], city_id: str | None = None) -> int:
+    """
+    Set canonical cityId across given fields; return count updated.
+
+    If city_id is not provided, fallback to the global canonical id, and if that is missing,
+    attempt to derive it from the first record that already has a cityId.
+    """
+    canonical = city_id or _CANONICAL_CITY_ID
+    if canonical is None:
+        for rec in records:
+            cid = rec.get("cityId")
+            if cid:
+                canonical = cid
+                _CANONICAL_CITY_ID = cid
+                break
+    if canonical is None:
+        return 0
+
     updated = 0
     for record in records:
         for field in fields:
-            if record.get(field) != CANONICAL_CITY_ID:
-                record[field] = CANONICAL_CITY_ID
+            if record.get(field) != canonical:
+                record[field] = canonical
                 updated += 1
     return updated
 

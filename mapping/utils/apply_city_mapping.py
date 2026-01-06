@@ -1,9 +1,9 @@
 """
-Apply canonical city mapping and propagate the cityId across extracted JSON outputs.
+Derive a canonical cityId from extracted data and propagate it across JSON outputs.
 
 - Reads extraction outputs (expected to be cleaned with clear_foreign_keys.py).
 - Writes mapped copies to mapping/output by default.
-- Sets a single canonical cityId for all city-linked records.
+- Uses the first extracted City record as the canonical city (fallback: generated UUID if none found).
 """
 
 from __future__ import annotations
@@ -13,6 +13,7 @@ import json
 import logging
 from pathlib import Path
 from typing import Iterable
+import uuid
 
 from mapping.utils.llm_utils import load_json_list as load_json_list_base
 
@@ -20,26 +21,6 @@ LOGGER = logging.getLogger(__name__)
 
 DEFAULT_INPUT_DIR = Path(__file__).resolve().parents[2] / "extraction" / "output"
 DEFAULT_OUTPUT_DIR = Path(__file__).resolve().parents[1] / "output"
-
-# Canonical city for this run (Leipzig); reuse this cityId everywhere.
-CANONICAL_CITY_ID = "b1f03c92-6f8a-4f27-bf5a-c1d58ddc3e17"
-CANONICAL_CITY_TEMPLATE = {
-    "cityId": CANONICAL_CITY_ID,
-    "cityName": "Leipzig",
-    "country": "Germany",
-    "locode": None,
-    "areaKm2": "300",
-    "notes": "City area described as 'almost 300 km2' in source document. Context: Climate City Contract for EU Mission participation.",
-    "misc": {
-        "population_2023": "628718 main residents",
-        "population_density": "2129 people per square kilometre",
-        "foreign_population_percent": "14",
-        "state": "Free State of Saxony",
-        "national_rank": "seventh largest city in Germany",
-        "area_qualifier": "almost 300 km2",
-        "eu_mission": "Participant in EU Mission '100 climate-neutral and smart cities by 2030'",
-    },
-}
 
 # Files that should carry cityId once the canonical city is set.
 CITY_ID_FIELDS: dict[str, list[str]] = {
@@ -79,24 +60,39 @@ def write_json(path: Path, payload: list[dict]) -> None:
     path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
 
 
-def build_city_record(source: dict | None) -> dict:
-    """Merge canonical city values with the first extracted City record."""
-    misc = {**(source.get("misc") or {})} if source else {}
-    misc.update(CANONICAL_CITY_TEMPLATE["misc"])
+def build_city_record(source: dict | None) -> tuple[dict, str]:
+    """
+    Derive the canonical city record from the first extracted City entry.
 
-    record = {**(source or {}), **CANONICAL_CITY_TEMPLATE}
-    record["cityId"] = CANONICAL_CITY_ID
-    record["misc"] = misc
-    return record
+    If no City is present, generate a placeholder with a new UUID so downstream mapping can proceed.
+    """
+    if source and source.get("cityId"):
+        canonical_id = source["cityId"]
+        record = dict(source)
+    elif source:
+        canonical_id = str(uuid.uuid4())
+        record = dict(source, cityId=canonical_id)
+    else:
+        canonical_id = str(uuid.uuid4())
+        record = {
+            "cityId": canonical_id,
+            "cityName": "Unknown City",
+            "country": None,
+            "locode": None,
+            "areaKm2": None,
+            "notes": "Placeholder city generated because no City record was extracted.",
+            "misc": None,
+        }
+    return record, canonical_id
 
 
-def apply_city_fk(records: list[dict], fields: Iterable[str]) -> int:
+def apply_city_fk(records: list[dict], fields: Iterable[str], city_id: str) -> int:
     """Set cityId on provided fields; return how many fields were updated."""
     updated = 0
     for record in records:
         for field in fields:
-            if record.get(field) != CANONICAL_CITY_ID:
-                record[field] = CANONICAL_CITY_ID
+            if record.get(field) != city_id:
+                record[field] = city_id
                 updated += 1
     return updated
 
@@ -133,7 +129,7 @@ def main() -> None:
 
     # City record
     city_payload, city_status = load_json_list(input_dir / "City.json")
-    city_record = build_city_record(city_payload[0] if city_payload else None)
+    city_record, canonical_city_id = build_city_record(city_payload[0] if city_payload else None)
     if args.apply:
         write_json(output_dir / "City.json", [city_record])
     results.append(
@@ -141,7 +137,7 @@ def main() -> None:
             "file": "City.json",
             "status": city_status,
             "source_records": len(city_payload or []),
-            "cityId": CANONICAL_CITY_ID,
+            "cityId": canonical_city_id,
             "written": args.apply,
         }
     )
@@ -157,7 +153,7 @@ def main() -> None:
             )
             continue
 
-        updated = apply_city_fk(records, fields)
+        updated = apply_city_fk(records, fields, canonical_city_id)
         if args.apply:
             write_json(output_dir / fname, records)
         results.append(
@@ -181,7 +177,7 @@ def main() -> None:
             {"file": fname, "status": "copied", "records": len(records), "city_fields_set": 0, "written": args.apply}
         )
 
-    print(f"Canonical cityId: {CANONICAL_CITY_ID}")
+    print(f"Canonical cityId: {canonical_city_id}")
     for result in results:
         print(
             f"{result['file']}: {result['status']} "

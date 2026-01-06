@@ -108,14 +108,30 @@ mapping:
 
 ## Stage 1: PDF → Markdown
 
-### Examples
+### Examples (Using Pipeline Script)
+
+```bash
+# Single PDF with vision refinement
+python run_pipeline.py --input documents/sample.pdf
+
+# Single PDF without vision (faster)
+python run_pipeline.py --input documents/sample.pdf --no-vision
+
+# All PDFs, OCR only
+python run_pipeline.py --no-vision
+
+# Single PDF without mapping
+python run_pipeline.py --input documents/sample.pdf --no-mapping
+```
+
+### Direct Module Usage
 
 ```bash
 # Single PDF with vision refinement
 python -m pdf2markdown.pdf_to_markdown --input documents/sample.pdf
 
-# Without vision (faster)
-python -m pdf2markdown.pdf_to_markdown --input documents/sample.pdf --vision-model ""
+# Without vision (use "none" not empty string)
+python -m pdf2markdown.pdf_to_markdown --input documents/sample.pdf --vision-model none
 
 # Batch processing
 python -m pdf2markdown.pdf_to_markdown --input documents/ --pattern "*.pdf"

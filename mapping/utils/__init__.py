@@ -1,11 +1,11 @@
 """Utilities for mapping workflows."""
 
 from mapping.utils.llm_utils import (
-    CANONICAL_CITY_ID,
     LLMSelector,
     UNMAPPED_RECORDS,
     build_options,
     load_json_list,
+    set_canonical_city_id,
     set_city_id,
     summarise_record,
     write_json,
@@ -21,11 +21,11 @@ from mapping.utils.clear_foreign_keys import FK_FIELDS, clear_fields, process_fi
 from mapping.utils.validate_foreign_keys import find_fk_issues, build_pk_index, load_json_list as load_json_list_fk
 
 __all__ = [
-    "CANONICAL_CITY_ID",
     "LLMSelector",
     "UNMAPPED_RECORDS",
     "build_options",
     "load_json_list",
+    "set_canonical_city_id",
     "set_city_id",
     "summarise_record",
     "write_json",

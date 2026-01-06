@@ -18,7 +18,14 @@ from dotenv import load_dotenv
 from openai import OpenAI
 
 from utils import load_llm_config
-from mapping.utils import LLMSelector, build_options, load_json_list, set_city_id, write_json
+from mapping.utils import (
+    LLMSelector,
+    build_options,
+    load_json_list,
+    set_canonical_city_id,
+    set_city_id,
+    write_json,
+)
 from mapping.mappers.budget_funding_mapper import map_budget_funding
 from mapping.mappers.city_target_mapper import map_city_target
 from mapping.mappers.emission_sector_mapper import map_emission_sector
@@ -98,15 +105,17 @@ def run_llm_mapping(
     except ValueError as exc:
         raise RuntimeError(f"Failed to load input data: {exc}") from exc
 
-    # Canonical city application (idempotent)
-    set_city_id(city_records, ["cityId"])
-    set_city_id(climate_contracts, ["cityId"])
-    set_city_id(city_stats, ["cityId"])
-    set_city_id(emissions, ["cityId"])
-    set_city_id(city_budgets, ["cityId"])
-    set_city_id(initiatives, ["cityId"])
-    set_city_id(indicators, ["cityId"])
-    set_city_id(city_targets, ["cityId"])
+    # Canonical city application (derive from extracted City)
+    canonical_city_id = city_records[0].get("cityId") if city_records else None
+    set_canonical_city_id(canonical_city_id)
+    set_city_id(city_records, ["cityId"], canonical_city_id)
+    set_city_id(climate_contracts, ["cityId"], canonical_city_id)
+    set_city_id(city_stats, ["cityId"], canonical_city_id)
+    set_city_id(emissions, ["cityId"], canonical_city_id)
+    set_city_id(city_budgets, ["cityId"], canonical_city_id)
+    set_city_id(initiatives, ["cityId"], canonical_city_id)
+    set_city_id(indicators, ["cityId"], canonical_city_id)
+    set_city_id(city_targets, ["cityId"], canonical_city_id)
 
     # Build selection options
     sector_options = build_options(sectors, "sectorId", ("sectorName", "description"))
