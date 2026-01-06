@@ -3,6 +3,9 @@
 import inspect
 import json
 import logging
+import re
+from datetime import date
+from decimal import Decimal, InvalidOperation
 from typing import List, Sequence, Set, Type, get_args, get_origin
 
 from openai.types.responses import (
@@ -65,6 +68,73 @@ def extract_model_classes(models_module) -> list[Type[BaseModel]]:
             continue
         classes.append(obj)
     return sorted(classes, key=lambda cls: cls.__name__)
+
+
+def _normalize_year(value: object) -> object:
+    """Normalize year strings like '2030' to '2030-01-01'."""
+    if isinstance(value, str) and value.isdigit() and len(value) == 4:
+        return f"{value}-01-01"
+    return value
+
+
+def _normalize_decimal(value: object) -> object:
+    """
+    Normalize numeric strings with commas/percent/text to a Decimal-friendly string.
+    Examples:
+      "1,471,000" -> "1471000"
+      "4%" -> "4"
+      "around 300 MW" -> "300"
+    """
+    if isinstance(value, (int, float, Decimal)):
+        return value
+    if not isinstance(value, str):
+        return value
+
+    # Find first numeric chunk
+    match = re.search(r"-?\d+(?:[.,]\d+)?", value)
+    if not match:
+        return value
+    number = match.group(0)
+    # If both comma and dot exist, assume comma is thousand separator
+    if "," in number and "." in number:
+        number = number.replace(",", "")
+    elif "," in number and "." not in number:
+        # Treat comma as thousand separator
+        number = number.replace(",", "")
+    else:
+        number = number
+    # Convert decimal comma to dot
+    number = number.replace(",", ".")
+    try:
+        return str(Decimal(number))
+    except (InvalidOperation, ValueError):
+        return value
+
+
+def normalize_extracted_item(raw: dict, model_cls: Type[BaseModel]) -> dict:
+    """
+    Coerce common LLM output formats into schema-friendly values for strict Pydantic validation.
+
+    Focuses on date and decimal fields for CityTarget and IndicatorValue.
+    """
+    normalised = dict(raw)
+    name = model_cls.__name__
+
+    if name == "CityTarget":
+        for field in ("targetYear", "baselineYear"):
+            if field in normalised:
+                normalised[field] = _normalize_year(normalised[field])
+        for field in ("targetValue", "baselineValue"):
+            if field in normalised:
+                normalised[field] = _normalize_decimal(normalised[field])
+
+    if name == "IndicatorValue":
+        if "year" in normalised:
+            normalised["year"] = _normalize_year(normalised["year"])
+        if "value" in normalised:
+            normalised["value"] = _normalize_decimal(normalised["value"])
+
+    return normalised
 
 
 def to_json_ready(model_obj: BaseModel) -> dict:
@@ -134,7 +204,8 @@ def parse_record_instances(
             LOGGER.debug("[%s] Validation error: %s", model_cls.__name__, error_msg)
             continue
         try:
-            normalized_raw = auto_fill_missing_ids(raw, model_cls)
+            normalized_raw = normalize_extracted_item(raw, model_cls)
+            normalized_raw = auto_fill_missing_ids(normalized_raw, model_cls)
             parsed = model_cls.model_validate(normalized_raw)
             normalised = to_json_ready(parsed)
         except ValidationError as exc:
