@@ -4,7 +4,15 @@ from datetime import date
 from decimal import Decimal
 from uuid import UUID, uuid4
 
-from sqlalchemy import Date, ForeignKey, Numeric, String, Text
+from sqlalchemy import (
+    Date,
+    ForeignKey,
+    Integer,
+    Numeric,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -31,14 +39,18 @@ class Indicator(Base):
 
 class IndicatorValue(Base):
     __tablename__ = "IndicatorValue"
+    __table_args__ = (UniqueConstraint("indicatorId", "year"),)
 
     indicator_value_id: Mapped[UUID] = mapped_column(
         "indicatorValueId", PG_UUID(as_uuid=True), primary_key=True, default=uuid4
     )
     indicator_id: Mapped[UUID | None] = mapped_column(
-        "indicatorId", PG_UUID(as_uuid=True), ForeignKey("Indicator.indicatorId"), nullable=True
+        "indicatorId",
+        PG_UUID(as_uuid=True),
+        ForeignKey("Indicator.indicatorId"),
+        nullable=True,
     )
-    year: Mapped[date] = mapped_column("year", Date, nullable=False)
+    year: Mapped[int] = mapped_column("year", Integer, nullable=False)
     value: Mapped[Decimal] = mapped_column("value", Numeric, nullable=False)
     value_type: Mapped[str] = mapped_column("valueType", String, nullable=False)
     notes: Mapped[str | None] = mapped_column("notes", Text, nullable=True)
@@ -54,12 +66,19 @@ class CityTarget(Base):
         "cityId", PG_UUID(as_uuid=True), ForeignKey("City.cityId"), nullable=True
     )
     indicator_id: Mapped[UUID | None] = mapped_column(
-        "indicatorId", PG_UUID(as_uuid=True), ForeignKey("Indicator.indicatorId"), nullable=True
+        "indicatorId",
+        PG_UUID(as_uuid=True),
+        ForeignKey("Indicator.indicatorId"),
+        nullable=True,
     )
     description: Mapped[str] = mapped_column("description", Text, nullable=False)
     target_year: Mapped[date] = mapped_column("targetYear", Date, nullable=False)
-    target_value: Mapped[Decimal] = mapped_column("targetValue", Numeric, nullable=False)
-    baseline_year: Mapped[date | None] = mapped_column("baselineYear", Date, nullable=True)
+    target_value: Mapped[Decimal] = mapped_column(
+        "targetValue", Numeric, nullable=False
+    )
+    baseline_year: Mapped[date | None] = mapped_column(
+        "baselineYear", Date, nullable=True
+    )
     baseline_value: Mapped[Decimal | None] = mapped_column(
         "baselineValue", Numeric, nullable=True
     )

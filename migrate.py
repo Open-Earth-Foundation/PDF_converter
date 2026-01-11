@@ -119,13 +119,19 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Database migration helper.")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    upgrade_parser = subparsers.add_parser("upgrade", help="Apply migrations (default: head).")
+    upgrade_parser = subparsers.add_parser(
+        "upgrade", help="Apply migrations (default: head)."
+    )
     upgrade_parser.add_argument("revision", nargs="?", default="head")
 
-    downgrade_parser = subparsers.add_parser("downgrade", help="Rollback migrations (default: -1).")
+    downgrade_parser = subparsers.add_parser(
+        "downgrade", help="Rollback migrations (default: -1)."
+    )
     downgrade_parser.add_argument("revision", nargs="?", default="-1")
 
-    revision_parser = subparsers.add_parser("revision", help="Create a new revision file.")
+    revision_parser = subparsers.add_parser(
+        "revision", help="Create a new revision file."
+    )
     revision_parser.add_argument("-m", "--message", required=True)
     revision_parser.add_argument("--rev-id", default=None)
 
@@ -145,10 +151,24 @@ def main() -> None:
     cfg = load_alembic_config()
 
     if args.command == "upgrade":
-        command.upgrade(cfg, args.revision)
+        try:
+            command.upgrade(cfg, args.revision)
+            print(
+                f"\n[SUCCESS] Migration upgrade to '{args.revision}' completed successfully!"
+            )
+        except Exception as e:
+            print(f"\n[FAILED] Migration upgrade failed: {e}")
+            raise
         return
     if args.command == "downgrade":
-        command.downgrade(cfg, args.revision)
+        try:
+            command.downgrade(cfg, args.revision)
+            print(
+                f"\n[SUCCESS] Migration downgrade to '{args.revision}' completed successfully!"
+            )
+        except Exception as e:
+            print(f"\n[FAILED] Migration downgrade failed: {e}")
+            raise
         return
 
     raise RuntimeError(f"Unknown command: {args.command}")

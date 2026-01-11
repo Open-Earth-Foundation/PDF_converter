@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date
 from uuid import UUID, uuid4
 
-from sqlalchemy import Date, ForeignKey, Integer, String, Text
+from sqlalchemy import Date, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -12,6 +12,9 @@ from database.base import Base
 
 class EmissionRecord(Base):
     __tablename__ = "EmissionRecord"
+    __table_args__ = (
+        UniqueConstraint("cityId", "year", "sectorId", "scope", "ghgType"),
+    )
 
     emission_record_id: Mapped[UUID] = mapped_column(
         "emissionRecordId", PG_UUID(as_uuid=True), primary_key=True, default=uuid4
@@ -19,7 +22,7 @@ class EmissionRecord(Base):
     city_id: Mapped[UUID | None] = mapped_column(
         "cityId", PG_UUID(as_uuid=True), ForeignKey("City.cityId"), nullable=True
     )
-    year: Mapped[date] = mapped_column("year", Date, nullable=False)
+    year: Mapped[int] = mapped_column("year", Integer, nullable=False)
     sector_id: Mapped[UUID | None] = mapped_column(
         "sectorId", PG_UUID(as_uuid=True), ForeignKey("Sector.sectorId"), nullable=True
     )

@@ -3,7 +3,7 @@ from __future__ import annotations
 from decimal import Decimal
 from uuid import UUID, uuid4
 
-from sqlalchemy import ForeignKey, Integer, Numeric, String, Text
+from sqlalchemy import ForeignKey, Integer, Numeric, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -45,6 +45,7 @@ class Stakeholder(Base):
 
 class InitiativeStakeholder(Base):
     __tablename__ = "InitiativeStakeholder"
+    __table_args__ = (UniqueConstraint("initiativeId", "stakeholderId"),)
 
     initiative_stakeholder_id: Mapped[UUID] = mapped_column(
         "initiativeStakeholderId",
@@ -53,10 +54,16 @@ class InitiativeStakeholder(Base):
         default=uuid4,
     )
     initiative_id: Mapped[UUID | None] = mapped_column(
-        "initiativeId", PG_UUID(as_uuid=True), ForeignKey("Initiative.initiativeId"), nullable=True
+        "initiativeId",
+        PG_UUID(as_uuid=True),
+        ForeignKey("Initiative.initiativeId"),
+        nullable=True,
     )
     stakeholder_id: Mapped[UUID | None] = mapped_column(
-        "stakeholderId", PG_UUID(as_uuid=True), ForeignKey("Stakeholder.stakeholderId"), nullable=True
+        "stakeholderId",
+        PG_UUID(as_uuid=True),
+        ForeignKey("Stakeholder.stakeholderId"),
+        nullable=True,
     )
     role: Mapped[str | None] = mapped_column("role", String, nullable=True)
     notes: Mapped[str | None] = mapped_column("notes", Text, nullable=True)
@@ -64,6 +71,7 @@ class InitiativeStakeholder(Base):
 
 class InitiativeIndicator(Base):
     __tablename__ = "InitiativeIndicator"
+    __table_args__ = (UniqueConstraint("initiativeId", "indicatorId"),)
 
     initiative_indicator_id: Mapped[UUID] = mapped_column(
         "initiativeIndicatorId",
@@ -72,12 +80,20 @@ class InitiativeIndicator(Base):
         default=uuid4,
     )
     initiative_id: Mapped[UUID | None] = mapped_column(
-        "initiativeId", PG_UUID(as_uuid=True), ForeignKey("Initiative.initiativeId"), nullable=True
+        "initiativeId",
+        PG_UUID(as_uuid=True),
+        ForeignKey("Initiative.initiativeId"),
+        nullable=True,
     )
     indicator_id: Mapped[UUID | None] = mapped_column(
-        "indicatorId", PG_UUID(as_uuid=True), ForeignKey("Indicator.indicatorId"), nullable=True
+        "indicatorId",
+        PG_UUID(as_uuid=True),
+        ForeignKey("Indicator.indicatorId"),
+        nullable=True,
     )
-    contribution_type: Mapped[str] = mapped_column("contributionType", String, nullable=False)
+    contribution_type: Mapped[str] = mapped_column(
+        "contributionType", String, nullable=False
+    )
     expected_change: Mapped[Decimal | None] = mapped_column(
         "expectedChange", Numeric, nullable=True
     )

@@ -224,6 +224,38 @@ The database uses a consistent naming convention for constraints and indexes:
 - Primary keys: pk_<table>
 ```
 
+### Unique Constraints & Data Integrity
+
+To prevent duplicate data, the following unique constraints are enforced:
+
+**Time-Series Data** (one entry per time period per entity):
+
+- `CityAnnualStats`: Unique on (`cityId`, `year`) - one stat per city per year
+- `CityBudget`: Unique on (`cityId`, `year`) - one budget per city per year
+- `EmissionRecord`: Unique on (`cityId`, `year`, `sectorId`, `scope`, `ghgType`) - one record per unique combination
+- `IndicatorValue`: Unique on (`indicatorId`, `year`) - one value per indicator per year
+
+**Relationship Data** (prevent duplicate associations):
+
+- `InitiativeStakeholder`: Unique on (`initiativeId`, `stakeholderId`) - each stakeholder linked once per initiative
+- `InitiativeIndicator`: Unique on (`initiativeId`, `indicatorId`) - each indicator linked once per initiative
+- `InitiativeTef`: Unique on (`initiativeId`, `tefId`) - each TEF category linked once per initiative
+
+### Year Field Standardization
+
+All year-related fields use `Integer` type for consistency and to simplify queries and joins:
+
+- **CityAnnualStats.year**: Integer (e.g., 2024, 2030)
+- **CityBudget.year**: Integer (changed from DateTime)
+- **EmissionRecord.year**: Integer (changed from Date)
+- **IndicatorValue.year**: Integer (changed from Date)
+
+This standardization ensures:
+
+- Easy comparison and range queries (e.g., `WHERE year >= 2020`)
+- Consistency across all time-series tables
+- Simplified data validation (years are simple integers)
+
 ---
 
 ## Kubernetes Deployment

@@ -3,7 +3,7 @@ from __future__ import annotations
 from decimal import Decimal
 from uuid import UUID, uuid4
 
-from sqlalchemy import ForeignKey, Integer, Numeric, String, Text
+from sqlalchemy import ForeignKey, Integer, Numeric, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -25,6 +25,9 @@ class City(Base):
 
 class CityAnnualStats(Base):
     __tablename__ = "CityAnnualStats"
+    __table_args__ = (
+        UniqueConstraint("cityId", "year"),
+    )
 
     stat_id: Mapped[UUID] = mapped_column(
         "statId", PG_UUID(as_uuid=True), primary_key=True, default=uuid4

@@ -13,7 +13,9 @@ depends_on = None
 def upgrade() -> None:
     op.create_table(
         "City",
-        sa.Column("cityId", postgresql.UUID(as_uuid=True), primary_key=True, nullable=False),
+        sa.Column(
+            "cityId", postgresql.UUID(as_uuid=True), primary_key=True, nullable=False
+        ),
         sa.Column("cityName", sa.String(), nullable=False),
         sa.Column("country", sa.String(), nullable=False),
         sa.Column("locode", sa.String(), nullable=True),
@@ -23,7 +25,9 @@ def upgrade() -> None:
 
     op.create_table(
         "Sector",
-        sa.Column("sectorId", postgresql.UUID(as_uuid=True), primary_key=True, nullable=False),
+        sa.Column(
+            "sectorId", postgresql.UUID(as_uuid=True), primary_key=True, nullable=False
+        ),
         sa.Column("sectorName", sa.String(), nullable=False),
         sa.Column("description", sa.Text(), nullable=True),
         sa.Column("notes", sa.Text(), nullable=True),
@@ -31,7 +35,12 @@ def upgrade() -> None:
 
     op.create_table(
         "FundingSource",
-        sa.Column("fundingSourceId", postgresql.UUID(as_uuid=True), primary_key=True, nullable=False),
+        sa.Column(
+            "fundingSourceId",
+            postgresql.UUID(as_uuid=True),
+            primary_key=True,
+            nullable=False,
+        ),
         sa.Column("name", sa.String(), nullable=False),
         sa.Column("type", sa.String(), nullable=False),
         sa.Column("description", sa.Text(), nullable=True),
@@ -40,7 +49,12 @@ def upgrade() -> None:
 
     op.create_table(
         "Stakeholder",
-        sa.Column("stakeholderId", postgresql.UUID(as_uuid=True), primary_key=True, nullable=False),
+        sa.Column(
+            "stakeholderId",
+            postgresql.UUID(as_uuid=True),
+            primary_key=True,
+            nullable=False,
+        ),
         sa.Column("name", sa.String(), nullable=False),
         sa.Column("type", sa.String(), nullable=True),
         sa.Column("description", sa.Text(), nullable=True),
@@ -49,7 +63,9 @@ def upgrade() -> None:
 
     op.create_table(
         "TefCategory",
-        sa.Column("tefId", postgresql.UUID(as_uuid=True), primary_key=True, nullable=False),
+        sa.Column(
+            "tefId", postgresql.UUID(as_uuid=True), primary_key=True, nullable=False
+        ),
         sa.Column("parentId", postgresql.UUID(as_uuid=True), nullable=True),
         sa.Column("code", sa.String(), nullable=False),
         sa.Column("name", sa.String(), nullable=False),
@@ -59,7 +75,9 @@ def upgrade() -> None:
 
     op.create_table(
         "CityAnnualStats",
-        sa.Column("statId", postgresql.UUID(as_uuid=True), primary_key=True, nullable=False),
+        sa.Column(
+            "statId", postgresql.UUID(as_uuid=True), primary_key=True, nullable=False
+        ),
         sa.Column("cityId", postgresql.UUID(as_uuid=True), nullable=True),
         sa.Column("year", sa.Integer(), nullable=False),
         sa.Column("population", sa.Integer(), nullable=True),
@@ -67,11 +85,17 @@ def upgrade() -> None:
         sa.Column("gdpPerCapita", sa.Numeric(), nullable=True),
         sa.Column("notes", sa.Text(), nullable=True),
         sa.ForeignKeyConstraint(["cityId"], ["City.cityId"]),
+        sa.UniqueConstraint("cityId", "year"),
     )
 
     op.create_table(
         "ClimateCityContract",
-        sa.Column("climateCityContractId", postgresql.UUID(as_uuid=True), primary_key=True, nullable=False),
+        sa.Column(
+            "climateCityContractId",
+            postgresql.UUID(as_uuid=True),
+            primary_key=True,
+            nullable=False,
+        ),
         sa.Column("cityId", postgresql.UUID(as_uuid=True), nullable=True),
         sa.Column("contractDate", sa.DateTime(), nullable=False),
         sa.Column("title", sa.String(), nullable=False),
@@ -85,9 +109,14 @@ def upgrade() -> None:
 
     op.create_table(
         "EmissionRecord",
-        sa.Column("emissionRecordId", postgresql.UUID(as_uuid=True), primary_key=True, nullable=False),
+        sa.Column(
+            "emissionRecordId",
+            postgresql.UUID(as_uuid=True),
+            primary_key=True,
+            nullable=False,
+        ),
         sa.Column("cityId", postgresql.UUID(as_uuid=True), nullable=True),
-        sa.Column("year", sa.Date(), nullable=False),
+        sa.Column("year", sa.Integer(), nullable=False),
         sa.Column("sectorId", postgresql.UUID(as_uuid=True), nullable=True),
         sa.Column("scope", sa.String(), nullable=False),
         sa.Column("ghgType", sa.String(), nullable=False),
@@ -96,23 +125,32 @@ def upgrade() -> None:
         sa.Column("notes", sa.Text(), nullable=True),
         sa.ForeignKeyConstraint(["cityId"], ["City.cityId"]),
         sa.ForeignKeyConstraint(["sectorId"], ["Sector.sectorId"]),
+        sa.UniqueConstraint("cityId", "year", "sectorId", "scope", "ghgType"),
     )
 
     op.create_table(
         "CityBudget",
-        sa.Column("budgetId", postgresql.UUID(as_uuid=True), primary_key=True, nullable=False),
+        sa.Column(
+            "budgetId", postgresql.UUID(as_uuid=True), primary_key=True, nullable=False
+        ),
         sa.Column("cityId", postgresql.UUID(as_uuid=True), nullable=True),
-        sa.Column("year", sa.DateTime(), nullable=False),
+        sa.Column("year", sa.Integer(), nullable=False),
         sa.Column("totalAmount", sa.Integer(), nullable=False),
         sa.Column("currency", sa.String(), nullable=False),
         sa.Column("description", sa.Text(), nullable=True),
         sa.Column("notes", sa.Text(), nullable=True),
         sa.ForeignKeyConstraint(["cityId"], ["City.cityId"]),
+        sa.UniqueConstraint("cityId", "year"),
     )
 
     op.create_table(
         "BudgetFunding",
-        sa.Column("budgetFundingId", postgresql.UUID(as_uuid=True), primary_key=True, nullable=False),
+        sa.Column(
+            "budgetFundingId",
+            postgresql.UUID(as_uuid=True),
+            primary_key=True,
+            nullable=False,
+        ),
         sa.Column("budgetId", postgresql.UUID(as_uuid=True), nullable=True),
         sa.Column("fundingSourceId", postgresql.UUID(as_uuid=True), nullable=True),
         sa.Column("amount", sa.Integer(), nullable=False),
@@ -124,7 +162,12 @@ def upgrade() -> None:
 
     op.create_table(
         "Initiative",
-        sa.Column("initiativeId", postgresql.UUID(as_uuid=True), primary_key=True, nullable=False),
+        sa.Column(
+            "initiativeId",
+            postgresql.UUID(as_uuid=True),
+            primary_key=True,
+            nullable=False,
+        ),
         sa.Column("cityId", postgresql.UUID(as_uuid=True), nullable=True),
         sa.Column("title", sa.String(), nullable=False),
         sa.Column("description", sa.Text(), nullable=True),
@@ -139,18 +182,29 @@ def upgrade() -> None:
 
     op.create_table(
         "InitiativeStakeholder",
-        sa.Column("initiativeStakeholderId", postgresql.UUID(as_uuid=True), primary_key=True, nullable=False),
+        sa.Column(
+            "initiativeStakeholderId",
+            postgresql.UUID(as_uuid=True),
+            primary_key=True,
+            nullable=False,
+        ),
         sa.Column("initiativeId", postgresql.UUID(as_uuid=True), nullable=True),
         sa.Column("stakeholderId", postgresql.UUID(as_uuid=True), nullable=True),
         sa.Column("role", sa.String(), nullable=True),
         sa.Column("notes", sa.Text(), nullable=True),
         sa.ForeignKeyConstraint(["initiativeId"], ["Initiative.initiativeId"]),
         sa.ForeignKeyConstraint(["stakeholderId"], ["Stakeholder.stakeholderId"]),
+        sa.UniqueConstraint("initiativeId", "stakeholderId"),
     )
 
     op.create_table(
         "Indicator",
-        sa.Column("indicatorId", postgresql.UUID(as_uuid=True), primary_key=True, nullable=False),
+        sa.Column(
+            "indicatorId",
+            postgresql.UUID(as_uuid=True),
+            primary_key=True,
+            nullable=False,
+        ),
         sa.Column("cityId", postgresql.UUID(as_uuid=True), nullable=True),
         sa.Column("sectorId", postgresql.UUID(as_uuid=True), nullable=True),
         sa.Column("name", sa.String(), nullable=False),
@@ -163,18 +217,29 @@ def upgrade() -> None:
 
     op.create_table(
         "IndicatorValue",
-        sa.Column("indicatorValueId", postgresql.UUID(as_uuid=True), primary_key=True, nullable=False),
+        sa.Column(
+            "indicatorValueId",
+            postgresql.UUID(as_uuid=True),
+            primary_key=True,
+            nullable=False,
+        ),
         sa.Column("indicatorId", postgresql.UUID(as_uuid=True), nullable=True),
-        sa.Column("year", sa.Date(), nullable=False),
+        sa.Column("year", sa.Integer(), nullable=False),
         sa.Column("value", sa.Numeric(), nullable=False),
         sa.Column("valueType", sa.String(), nullable=False),
         sa.Column("notes", sa.Text(), nullable=True),
         sa.ForeignKeyConstraint(["indicatorId"], ["Indicator.indicatorId"]),
+        sa.UniqueConstraint("indicatorId", "year"),
     )
 
     op.create_table(
         "CityTarget",
-        sa.Column("cityTargetId", postgresql.UUID(as_uuid=True), primary_key=True, nullable=False),
+        sa.Column(
+            "cityTargetId",
+            postgresql.UUID(as_uuid=True),
+            primary_key=True,
+            nullable=False,
+        ),
         sa.Column("cityId", postgresql.UUID(as_uuid=True), nullable=True),
         sa.Column("indicatorId", postgresql.UUID(as_uuid=True), nullable=True),
         sa.Column("description", sa.Text(), nullable=False),
@@ -190,7 +255,12 @@ def upgrade() -> None:
 
     op.create_table(
         "InitiativeIndicator",
-        sa.Column("initiativeIndicatorId", postgresql.UUID(as_uuid=True), primary_key=True, nullable=False),
+        sa.Column(
+            "initiativeIndicatorId",
+            postgresql.UUID(as_uuid=True),
+            primary_key=True,
+            nullable=False,
+        ),
         sa.Column("initiativeId", postgresql.UUID(as_uuid=True), nullable=True),
         sa.Column("indicatorId", postgresql.UUID(as_uuid=True), nullable=True),
         sa.Column("contributionType", sa.String(), nullable=False),
@@ -198,16 +268,23 @@ def upgrade() -> None:
         sa.Column("notes", sa.Text(), nullable=True),
         sa.ForeignKeyConstraint(["initiativeId"], ["Initiative.initiativeId"]),
         sa.ForeignKeyConstraint(["indicatorId"], ["Indicator.indicatorId"]),
+        sa.UniqueConstraint("initiativeId", "indicatorId"),
     )
 
     op.create_table(
         "InitiativeTef",
-        sa.Column("initiativeTefId", postgresql.UUID(as_uuid=True), primary_key=True, nullable=False),
+        sa.Column(
+            "initiativeTefId",
+            postgresql.UUID(as_uuid=True),
+            primary_key=True,
+            nullable=False,
+        ),
         sa.Column("initiativeId", postgresql.UUID(as_uuid=True), nullable=True),
         sa.Column("tefId", postgresql.UUID(as_uuid=True), nullable=True),
         sa.Column("notes", sa.Text(), nullable=True),
         sa.ForeignKeyConstraint(["initiativeId"], ["Initiative.initiativeId"]),
         sa.ForeignKeyConstraint(["tefId"], ["TefCategory.tefId"]),
+        sa.UniqueConstraint("initiativeId", "tefId"),
     )
 
 

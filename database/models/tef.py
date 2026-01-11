@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from uuid import UUID, uuid4
 
-from sqlalchemy import ForeignKey, String, Text
+from sqlalchemy import ForeignKey, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -16,7 +16,10 @@ class TefCategory(Base):
         "tefId", PG_UUID(as_uuid=True), primary_key=True, default=uuid4
     )
     parent_id: Mapped[UUID | None] = mapped_column(
-        "parentId", PG_UUID(as_uuid=True), ForeignKey("TefCategory.tefId"), nullable=True
+        "parentId",
+        PG_UUID(as_uuid=True),
+        ForeignKey("TefCategory.tefId"),
+        nullable=True,
     )
     code: Mapped[str] = mapped_column("code", String, nullable=False)
     name: Mapped[str] = mapped_column("name", String, nullable=False)
@@ -25,12 +28,16 @@ class TefCategory(Base):
 
 class InitiativeTef(Base):
     __tablename__ = "InitiativeTef"
+    __table_args__ = (UniqueConstraint("initiativeId", "tefId"),)
 
     initiative_tef_id: Mapped[UUID] = mapped_column(
         "initiativeTefId", PG_UUID(as_uuid=True), primary_key=True, default=uuid4
     )
     initiative_id: Mapped[UUID | None] = mapped_column(
-        "initiativeId", PG_UUID(as_uuid=True), ForeignKey("Initiative.initiativeId"), nullable=True
+        "initiativeId",
+        PG_UUID(as_uuid=True),
+        ForeignKey("Initiative.initiativeId"),
+        nullable=True,
     )
     tef_id: Mapped[UUID | None] = mapped_column(
         "tefId", PG_UUID(as_uuid=True), ForeignKey("TefCategory.tefId"), nullable=True
