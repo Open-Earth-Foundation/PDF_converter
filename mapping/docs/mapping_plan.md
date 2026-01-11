@@ -1,6 +1,6 @@
 # Mapping Plan (step-by-step)
 
-Each section shows one extraction and join path for every model in `app/database/models.py`. Use these as discrete prompts/steps rather than a single big graph. City is fixed for a run - map it automatically as the first step before other mappings and reuse that city for every `cityId` link.
+Each section shows one extraction and join path for every model in `database/schemas.py`. Use these as discrete prompts/steps rather than a single big graph. City is fixed for a run - map it automatically as the first step before other mappings and reuse that city for every `cityId` link.
 
 ## 1) City anchors
 City fixed per run; resolve city once, then attach CCC and CAS to that city.

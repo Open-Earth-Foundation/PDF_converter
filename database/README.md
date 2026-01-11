@@ -1,426 +1,504 @@
-## Link to the data model
+# Database Setup & Management
 
-https://dbdiagram.io/d/NZCs-Data-Model-69160b2e6735e11170b30725
+This guide covers local database setup, running migrations, and Kubernetes deployment.
 
-## Explanation of the data model
+## Table of Contents
 
-### 1. Big picture
+1. [Local Setup](#local-setup)
+2. [Running Migrations](#running-migrations)
+3. [Database Models](#database-models)
+4. [Kubernetes Deployment](#kubernetes-deployment)
 
-At the center of the schema is the City.
-Almost everything is either:
+---
 
-- describing the city itself
-- tracking its emissions and indicators
-- tracking its budgets and funding
-- describing its initiatives and who is involved.
+## Local Setup
 
-The following provides an overview of the individual tables.
+### Prerequisites
 
-### 2. Core tables
+- Python 3.9+
+- PostgreSQL 15 (or Docker)
+- Virtual environment
 
-#### 2.1 City
+### Option 1: Using Docker Compose (Recommended)
 
-Table: City
+The easiest way to set up the database locally is using Docker Compose.
 
-Represents a real world city.
+1. **Start PostgreSQL**
 
-Key fields:
+```bash
+docker-compose up -d
+```
 
-- cityId - unique identifier
-- cityName, country
-- areaKm2, population, populationYear, populationDensity
-- notes
+This will:
 
-Main idea:
-Everything else is anchored to a City. A city can have contracts, budgets, emissions, indicators, targets and initiatives.
+- Start a PostgreSQL 15 container
+- Create a database named `pdf_converter`
+- Set up credentials: `pdf_user` / `pdf_pass`
+- Listen on `localhost:5432`
+- Persist data in a Docker volume (`pgdata`)
 
-#### 2.2 Climate City Contract
+2. **Verify the connection**
 
-Table: ClimateCityContract
+```bash
+psql -U pdf_user -d pdf_converter -h localhost -c "SELECT 1;"
+```
 
-Represents a climate contract document for a city.
+### Option 2: Manual PostgreSQL Installation
 
-Key fields:
+If you have PostgreSQL installed locally:
 
-- climateCityContractId
-- cityId - references City.cityId, unique and not null
-- contractDate, title, version, language
-- documentUrl
-- notes
+1. **Create a database and user**
 
-Relationship to City:
+```bash
+psql -U postgres -c "CREATE USER pdf_user WITH PASSWORD 'pdf_pass';"
+psql -U postgres -c "CREATE DATABASE pdf_converter OWNER pdf_user;"
+psql -U postgres -c "GRANT ALL PRIVILEGES ON DATABASE pdf_converter TO pdf_user;"
+```
 
-- Each ClimateCityContract belongs to exactly one City.
-- Because cityId is unique in this table, each City can have at most one ClimateCityContract.
+### Configure Environment
 
-Cardinality:
+1. **Create a `.env` file** in the project root (if not already present):
 
-- "A City can have zero or one climate city contract."
-- "A ClimateCityContract must always be attached to exactly one City."
+```bash
+cp .env.example .env
+```
 
-#### 2.3 Sector
+2. **Update `.env` with your database URL**
 
-Table: Sector
+```
+DATABASE_URL=postgresql+psycopg://pdf_user:pdf_pass@localhost:5432/pdf_converter
+```
 
-Represents a sector taxonomy (for GPC sectors, CCC sectors etc.).
+For Docker Compose, use the same URL as above. For manual setup, adjust `localhost` or password as needed.
 
-Key fields:
+### Install Dependencies
 
-- sectorId
-- sectorName
-- description
-- notes
+```bash
+pip install -r requirements.txt
+```
 
-How it is used:
+This includes:
 
-- Emission time series are recorded per City and Sector.
-- Indicators can optionally be linked to a Sector.
-- A Sector is a reusable label that can be shared across many records.
+- `SQLAlchemy>=2.0` - ORM
+- `alembic>=1.13` - Migration tool
+- `psycopg[binary]>=3.1` - PostgreSQL driver
 
-### 3. Emissions time series
+---
 
-#### 3.1 EmissionRecord
+## Running Migrations
 
-Table: EmissionRecord
+Migrations are managed using **Alembic**. The `migrate.py` script in the project root provides a CLI interface.
 
-Represents a time series of GHG emissions for a city.
+### How Migrations Work
 
-Key fields:
+1. Migration files live in `database/alembic/versions/`
+2. Each migration has an `upgrade()` and `downgrade()` function
+3. The migration script tracks which versions have been applied
 
-- emissionRecordId
-- cityId - references City.cityId
-- year - which year the record belongs to
-- sectorId - references Sector.sectorId
-- scope - emissions scope (e.g. Scope 1, 2, 3)
-- ghgType - e.g. "CO2", "CH4", "CO2e"
-- value - emission amount
-- unit
-- notes
+### Apply Migrations (Recommended)
 
-Relationships:
+```bash
+# Apply all pending migrations to HEAD
+python migrate.py upgrade head
 
-- A City can have many EmissionRecords.
-- A Sector can have many EmissionRecords.
-- Each EmissionRecord belongs to exactly one City and one Sector.
+# Apply a specific number of migrations
+python migrate.py upgrade +2
 
-Interpretation:
-"In year X, City Y emitted Z units of GHG type T in Sector S, for scope N."
+# Apply up to a specific revision
+python migrate.py upgrade <revision_id>
+```
 
-### 4. Budgets and funding
+**Example:**
 
-#### 4.1 Budget
+```bash
+# First time setup
+python migrate.py upgrade head
+```
 
-Table: Budget
+### Create a New Migration
 
-Represents a city budget for a given year (overall or climate related).
+1. **Modify a model** in `database/models/` (e.g., add a new field, new table)
 
-Key fields:
+2. **Create a migration file**
 
-- budgetId
-- cityId - references City.cityId
-- year
-- totalAmount
-- currency
-- description
-- notes
+```bash
+python migrate.py revision -m "Add new_field to City"
+```
 
-Relationships:
+This creates a new file in `database/alembic/versions/` like:
 
-- A City can have many Budgets (for different years or purposes).
-- Each Budget belongs to exactly one City.
+```
+20250107_150000_add_new_field_to_city.py
+```
 
-#### 4.2 FundingSource
+3. **Implement the migration**
 
-Table: FundingSource
+Edit the generated file and fill in the `upgrade()` and `downgrade()` functions:
 
-Represents where money comes from.
+```python
+def upgrade() -> None:
+    # What to do when applying this migration
+    op.add_column('city', sa.Column('new_field', sa.String(255), nullable=True))
 
-Key fields:
+def downgrade() -> None:
+    # How to undo this migration
+    op.drop_column('city', 'new_field')
+```
 
-- fundingSourceId
-- name - e.g. "EU Green Fund", "National Program X"
-- type - e.g. EU, national, private
-- description
-- notes
+4. **Apply the migration**
 
-A FundingSource exists independently of a specific city or budget.
+```bash
+python migrate.py upgrade head
+```
 
-#### 4.3 BudgetFunding
+### Rollback Migrations
 
-Table: BudgetFunding
+```bash
+# Rollback the last applied migration
+python migrate.py downgrade -1
 
-Defines how a Budget is financed by different funding sources.
+# Rollback to a specific revision
+python migrate.py downgrade <revision_id>
 
-Key fields:
+# Rollback all migrations
+python migrate.py downgrade base
+```
 
-- budgetFundingId
-- budgetId - references Budget.budgetId
-- fundingSourceId - references FundingSource.fundingSourceId
-- amount
-- currency
-- notes
+### Check Migration Status
 
-Relationships:
+To see which migrations have been applied:
 
-- One Budget can be financed by many FundingSources.
-- One FundingSource can fund many Budgets.
-- BudgetFunding is the many to many link table between Budgets and FundingSources.
+```bash
+# View all migration history
+psql -U pdf_user -d pdf_converter -h localhost -c "SELECT * FROM alembic_version;"
+```
 
-Summary:
+---
 
-- "A Budget has one City."
-- "A Budget can be funded by several FundingSources."
-- "A FundingSource can contribute to several Budgets."
-- "BudgetFunding tells us which FundingSource gave how much money to which Budget."
+## Database Models
 
-### 5. Initiatives and stakeholders
+The data model is centered around the **City** entity. Here's the hierarchy:
 
-#### 5.1 Initiative
+### Core Tables
 
-Table: Initiative
+- **City** - Real-world city, central anchor point
+- **ClimateCityContract** - Climate contract document for a city (1:1)
+- **Sector** - Taxonomy for sectors (GPC, CCC, etc.)
 
-Represents a concrete program, project or action carried out by a city.
+### Emissions
 
-Key fields:
+- **EmissionRecord** - Time series of GHG emissions by city, sector, and year
 
-- initiativeId
-- cityId - references City.cityId
-- title, description
-- startYear, endYear
-- budget, currency
-- expectedEmissionReduction, unit
-- status - e.g. planned, ongoing, completed
-- notes
+### Budgets & Funding
 
-Relationships:
+- **Budget** - City budget for a given year
+- **FundingSource** - Money sources (EU Green Fund, etc.)
+- **BudgetFunding** - Links budgets to funding sources (many-to-many)
 
-- A City can have many Initiatives.
-- Each Initiative belongs to exactly one City.
+### Initiatives & Stakeholders
 
-Example:
-"City X runs Initiative Y from year A to B with budget C, aiming to reduce D units of emissions."
+- **Initiative** - Programs/projects run by a city
+- **Stakeholder** - Actors (city dept, NGO, company, etc.)
+- **InitiativeStakeholder** - Links initiatives to stakeholders with roles (many-to-many)
 
-#### 5.2 Stakeholder
+### Indicators & Targets
 
-Table: Stakeholder
+- **Indicator** - What is measured (citywide or sector-specific)
+- **IndicatorValue** - Time series values for an indicator
+- **CityTarget** - City's official targets (e.g., 2030 or 2050 goals)
+- **InitiativeIndicator** - Links initiatives to indicators (many-to-many)
 
-Represents an actor involved in initiatives.
+### Reference
 
-Key fields:
+For a detailed data model diagram, see: [DBDiagram](https://dbdiagram.io/d/NZCs-Data-Model-69160b2e6735e11170b30725)
 
-- stakeholderId
-- name
-- type - e.g. "city department", "NGO", "company"
-- description
-- notes
+### Naming Convention
 
-Stakeholders are generic and not tied to a specific city in this schema. The same stakeholder could work with multiple cities or initiatives.
+The database uses a consistent naming convention for constraints and indexes:
 
-#### 5.3 InitiativeStakeholder
+```python
+- Indexes: ix_<table>_<column>
+- Unique constraints: uq_<table>_<column>
+- Check constraints: ck_<table>_<constraint_name>
+- Foreign keys: fk_<table>_<column>_<referenced_table>
+- Primary keys: pk_<table>
+```
 
-Table: InitiativeStakeholder
+### Unique Constraints & Data Integrity
 
-Links Initiatives and Stakeholders, and captures the stakeholder role.
+To prevent duplicate data, the following unique constraints are enforced:
 
-Key fields:
+**Time-Series Data** (one entry per time period per entity):
 
-- initiativeStakeholderId
-- initiativeId - references Initiative.initiativeId
-- stakeholderId - references Stakeholder.stakeholderId
-- role - e.g. "lead", "partner", "funder", "beneficiary"
-- notes
+- `CityAnnualStats`: Unique on (`cityId`, `year`) - one stat per city per year
+- `CityBudget`: Unique on (`cityId`, `year`) - one budget per city per year
+- `EmissionRecord`: Unique on (`cityId`, `year`, `sectorId`, `scope`, `ghgType`) - one record per unique combination
+- `IndicatorValue`: Unique on (`indicatorId`, `year`) - one value per indicator per year
 
-Relationships:
+**Relationship Data** (prevent duplicate associations):
 
-- One Initiative can involve many Stakeholders.
-- One Stakeholder can be involved in many Initiatives.
-- InitiativeStakeholder is the many to many link table between them.
+- `InitiativeStakeholder`: Unique on (`initiativeId`, `stakeholderId`) - each stakeholder linked once per initiative
+- `InitiativeIndicator`: Unique on (`initiativeId`, `indicatorId`) - each indicator linked once per initiative
+- `InitiativeTef`: Unique on (`initiativeId`, `tefId`) - each TEF category linked once per initiative
 
-Summary:
+### Year Field Standardization
 
-- "An Initiative is led and supported by one or more Stakeholders."
-- "A Stakeholder can take part in multiple Initiatives with different roles."
+All year-related fields use `Integer` type for consistency and to simplify queries and joins:
 
-### 6. Indicators, values and targets
+- **CityAnnualStats.year**: Integer (e.g., 2024, 2030)
+- **CityBudget.year**: Integer (changed from DateTime)
+- **EmissionRecord.year**: Integer (changed from Date)
+- **IndicatorValue.year**: Integer (changed from Date)
 
-This block is how we describe "what is measured" and "where the city wants to go".
+This standardization ensures:
 
-#### 6.1 Indicator
+- Easy comparison and range queries (e.g., `WHERE year >= 2020`)
+- Consistency across all time-series tables
+- Simplified data validation (years are simple integers)
 
-Table: Indicator
+---
 
-Represents what we are measuring for a city, optionally for a specific sector.
+## Kubernetes Deployment
 
-Key fields:
+The database is deployed in Kubernetes using a PostgreSQL service and migrations run as a Job.
 
-- indicatorId
-- cityId - references City.cityId
-- sectorId - references Sector.sectorId, nullable
-- name - e.g. "Citywide GHG emissions", "EV share of new registrations"
-- description
-- unit - e.g. "tCO2e", "%", "km", "count"
-- notes
+### Files
 
-Relationships:
+- `k8s/pdf-converter-db-configmap.yml` - ConfigMap with database credentials
+- `k8s/pdf-converter-migrate.yml` - Job to run migrations
 
-- A City can have many Indicators.
-- A Sector can have many Indicators (but the link is optional).
-- Each Indicator belongs to exactly one City, and optionally one Sector.
+### Prerequisites
 
-Possible cases:
+- Kubernetes cluster (EKS, GKE, AKS, or local kind/minikube)
+- `kubectl` configured
+- Docker image pushed to a registry (e.g., `ghcr.io/open-earth-foundation/pdf-converter:latest`)
 
-- city level indicators not tied to any sector, or
-- sector specific indicators like "building sector emissions" for a certain city.
+### Configuration
 
-#### 6.2 IndicatorValue
+#### 1. Database ConfigMap
 
-Table: IndicatorValue
+Update `k8s/pdf-converter-db-configmap.yml` with your database host:
 
-Represents the time series values for an Indicator.
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pdf-converter-db-configmap
+  namespace: default
+data:
+  DB_HOST: "your-db-host" # ← Update this
+  DB_PORT: "5432"
+  DB_USER: "pdf_user"
+  DB_PASSWORD: "pdf_pass"
+  DB_NAME: "pdf_converter"
+  DATABASE_URL: "postgresql+psycopg://pdf_user:pdf_pass@your-db-host:5432/pdf_converter"
+```
 
-Key fields:
+**Example values:**
 
-- indicatorValueId
-- indicatorId - references Indicator.indicatorId
-- year
-- value
-- valueType - e.g. "baseline", "historical", "current", "projection"
-- notes
+- **RDS (AWS)**: `pdf-converter-db.c9akciq32.us-east-1.rds.amazonaws.com`
+- **Google Cloud SQL**: `10.0.0.3` (internal IP)
+- **Self-hosted in-cluster**: `postgres.database.svc.cluster.local` (if running in `database` namespace)
+- **Docker desktop**: `host.docker.internal` (for local K8s)
 
-Relationships:
+#### 2. Apply ConfigMap
 
-- One Indicator can have many IndicatorValues (one per year or scenario).
-- Each IndicatorValue belongs to exactly one Indicator.
+```bash
+kubectl apply -f k8s/pdf-converter-db-configmap.yml
+```
 
-Examples:
+### Running Migrations in Kubernetes
 
-- "Historical value of total city emissions in 2015"
-- "Projection for EV share in 2030"
+The migration runs as a **Kubernetes Job**. It:
 
-#### 6.3 CityTarget
+1. Uses the same Docker image as the app
+2. Reads the `DATABASE_URL` from ConfigMap
+3. Runs `python migrate.py upgrade head`
+4. Completes when done (does not restart)
 
-Table: CityTarget
+#### Deploy Migration Job
 
-Represents the city’s official target for a given Indicator, plus optional baseline info.
+```bash
+kubectl apply -f k8s/pdf-converter-migrate.yml
+```
 
-Key fields:
+#### Monitor the Job
 
-- cityTargetId
-- cityId - references City.cityId
-- indicatorId - references Indicator.indicatorId
-- description - narrative description of the target
-- targetYear
-- targetValue
-- baselineYear
-- baselineValue
-- status - e.g. "planned", "adopted", "achieved", "under_revision"
-- notes
+```bash
+# Check job status
+kubectl get jobs
 
-Relationships:
+# View logs
+kubectl logs job/pdf-converter-migrate
 
-- A City can have many CityTargets.
-- An Indicator can have many CityTargets (for different target years or scenarios).
-  Example: 2030 and 2040 targets for the same indicator.
+# Describe the job (see why it failed, if it did)
+kubectl describe job pdf-converter-migrate
 
-Each CityTarget belongs to one City and one Indicator.
+# View pod details
+kubectl get pods | grep migrate
+kubectl describe pod <pod-name>
+```
 
-How to interpret:
-"City X has set a target for Indicator Y to reach value V by year T, starting from a baseline value B in year Y0, and the target is currently in status S."
+#### Retry or Delete a Job
 
-### 7. Linking initiatives to indicators
+```bash
+# Delete the job to run migrations again
+kubectl delete job pdf-converter-migrate
 
-#### 7.1 InitiativeIndicator
+# Then reapply
+kubectl apply -f k8s/pdf-converter-migrate.yml
+```
 
-Table: InitiativeIndicator
+### Backoff Behavior
 
-Links Initiatives to Indicators and describes how the initiative impacts the indicator.
+The Job is configured with `backoffLimit: 3`, meaning:
 
-Key fields:
+- If the migration fails, it will retry up to 3 times
+- After 3 failures, the job stays in a failed state (does not keep retrying)
 
-- initiativeIndicatorId
-- initiativeId - references Initiative.initiativeId
-- indicatorId - references Indicator.indicatorId
-- contributionType - e.g. "expected", "monitored"
-- expectedChange - numeric change, e.g. -5000 tCO2e, +10 percentage points
-- notes
+### Best Practices for K8s Deployment
 
-Relationships:
+1. **Run migrations before the app**
 
-- One Initiative can affect many Indicators.
-- One Indicator can be affected by many Initiatives.
-- InitiativeIndicator is the many to many link table between Initiatives and Indicators.
+   - Use an init container or ensure migrations complete before deploying the app
+   - This prevents the app from crashing due to missing tables
 
-Examples:
+2. **Use a separate database service or managed service**
 
-- "Retrofit program initiative is expected to reduce citywide 2030 emissions by 5000 tCO2e"
-- "Cycling initiative is monitored via an indicator measuring kilometers of bike lanes and share of trips by bike"
+   - Don't run PostgreSQL in Kubernetes unless you have persistence configured
+   - Use AWS RDS, Google Cloud SQL, or similar for production
 
-### 8. Relationship summary in plain language
+3. **Secrets management**
 
-Putting it all together:
+   - Store passwords in Kubernetes Secrets instead of ConfigMap
+   - Update the Job to reference the secret:
+     ```yaml
+     env:
+       - name: DATABASE_URL
+         valueFrom:
+           secretKeyRef:
+             name: pdf-converter-db-secret
+             key: DATABASE_URL
+     ```
 
-#### City and Contract
+4. **Namespace isolation**
+   - Use separate namespaces for dev, staging, and production
+   - Update the ConfigMap/Job metadata with the correct namespace
 
-A City is the core object in the system.
+### Example: Using Secrets
 
-Each City can have zero or one ClimateCityContract.
+Create a secret:
 
-Each ClimateCityContract must belong to exactly one City.
+```bash
+kubectl create secret generic pdf-converter-db-secret \
+  --from-literal=DATABASE_URL='postgresql+psycopg://pdf_user:pdf_pass@my-db-host:5432/pdf_converter'
+```
 
-#### City and Sectors
+Then update `k8s/pdf-converter-migrate.yml`:
 
-Sectors define a taxonomy that can be reused.
+```yaml
+env:
+  - name: DATABASE_URL
+    valueFrom:
+      secretKeyRef:
+        name: pdf-converter-db-secret
+        key: DATABASE_URL
+```
 
-A Sector can have many EmissionRecords and Indicators attached.
+---
 
-A City has emissions and indicators that may be broken down by Sector.
+## Troubleshooting
 
-#### Emissions
+### Error: `DATABASE_URL is not set`
 
-A City has many EmissionRecords.
+**Cause**: The `DATABASE_URL` environment variable is not set.
 
-Each EmissionRecord is for one City, one Sector, one year.
+**Solution**: Set it before running migrations:
 
-EmissionRecord is essentially a specialized indicator table for GHG emissions.
+```bash
+export DATABASE_URL="postgresql+psycopg://pdf_user:pdf_pass@localhost:5432/pdf_converter"
+python migrate.py upgrade head
+```
 
-#### Budgets and Funding
+Or ensure `.env` file exists with the variable set.
 
-A City has many Budgets (for different years).
+### Error: `psycopg.OperationalError: connection refused`
 
-A Budget belongs to one City and can be financed by many FundingSources.
+**Cause**: PostgreSQL is not running or the host/port is wrong.
 
-A FundingSource can finance many Budgets.
+**Solution**:
 
-BudgetFunding is the bridge that says "FundingSource X contributed amount A to Budget B."
+```bash
+# Check if postgres is running (Docker)
+docker-compose ps
 
-#### Initiatives and Stakeholders
+# Start it if needed
+docker-compose up -d
 
-A City has many Initiatives.
+# Or test manual connection
+psql -U pdf_user -d pdf_converter -h localhost
+```
 
-Each Initiative belongs to one City.
+### Error: `FATAL: permission denied for database "pdf_converter"`
 
-Initiatives involve Stakeholders.
+**Cause**: The user doesn't have permissions.
 
-A Stakeholder can be part of many Initiatives.
+**Solution**: Verify user permissions:
 
-InitiativeStakeholder links Initiatives and Stakeholders and stores the Stakeholder’s role.
+```bash
+psql -U postgres -c "GRANT ALL PRIVILEGES ON DATABASE pdf_converter TO pdf_user;"
+```
 
-#### Indicators, Values and Targets
+### Migration file exists but won't apply
 
-A City has many Indicators, some citywide, some sector specific.
+**Cause**: The migration may be in an inconsistent state.
 
-Each Indicator can have many IndicatorValues over time that represent baselines, history, current values or projections.
+**Solution**:
 
-Each Indicator can also have many CityTargets representing goals for certain years, including baselines and statuses.
+```bash
+# Check the alembic_version table
+psql -U pdf_user -d pdf_converter -h localhost -c "SELECT * FROM alembic_version;"
 
-Each CityTarget is tied to one City and one Indicator.
+# Manually fix if needed (use with caution)
+psql -U pdf_user -d pdf_converter -h localhost -c "DELETE FROM alembic_version WHERE version_num = '<revision_id>';"
+```
 
-#### Initiatives and Indicators
+---
 
-Initiatives affect Indicators.
+## Quick Reference
 
-One Initiative can impact several Indicators.
+### Local Development
 
-One Indicator can be influenced by several Initiatives.
+```bash
+# Start database
+docker-compose up -d
 
-InitiativeIndicator describes that relationship and how big the expected or monitored impact is.
+# Install dependencies
+pip install -r requirements.txt
+
+# Set environment
+export DATABASE_URL="postgresql+psycopg://pdf_user:pdf_pass@localhost:5432/pdf_converter"
+
+# Run migrations
+python migrate.py upgrade head
+```
+
+### Create and Apply Migration
+
+```bash
+python migrate.py revision -m "Your migration description"
+python migrate.py upgrade head
+```
+
+### Kubernetes Deployment
+
+```bash
+# Apply configuration
+kubectl apply -f k8s/pdf-converter-db-configmap.yml
+
+# Run migrations
+kubectl apply -f k8s/pdf-converter-migrate.yml
+
+# Monitor
+kubectl logs job/pdf-converter-migrate -f
+```

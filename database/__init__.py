@@ -1,43 +1,5 @@
-"""Database-related Pydantic models and helpers."""
+"""
+Database package.
 
-from .models import (
-    BaseDBModel,
-    BudgetFunding,
-    City,
-    CityAnnualStats,
-    CityBudget,
-    CityTarget,
-    ClimateCityContract,
-    EmissionRecord,
-    FundingSource,
-    Indicator,
-    IndicatorValue,
-    Initiative,
-    InitiativeIndicator,
-    InitiativeStakeholder,
-    InitiativeTef,
-    Sector,
-    Stakeholder,
-    TefCategory,
-)
-
-__all__ = [
-    "BaseDBModel",
-    "BudgetFunding",
-    "City",
-    "CityAnnualStats",
-    "CityBudget",
-    "CityTarget",
-    "ClimateCityContract",
-    "EmissionRecord",
-    "FundingSource",
-    "Indicator",
-    "IndicatorValue",
-    "Initiative",
-    "InitiativeIndicator",
-    "InitiativeStakeholder",
-    "InitiativeTef",
-    "Sector",
-    "Stakeholder",
-    "TefCategory",
-]
+Keeps all DB connection, models, migrations (alembic), and seeding code under /database.
+"""

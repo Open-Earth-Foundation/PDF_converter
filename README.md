@@ -243,7 +243,7 @@ project_root/
 │   └── extract.py            # Core logic
 ├── mapping/                   # Stage 3: Link records
 ├── database/
-│   └── models.py             # Pydantic schemas (16 classes)
+│   └── schemas.py            # Pydantic schemas (16 classes)
 ├── documents/                # Input PDFs
 ├── tests/
 ├── llm_config.yml            # Model configuration
@@ -306,7 +306,7 @@ output = pdf_to_markdown_mistral(
 ```python
 from openai import OpenAI
 from extraction.extract import run_class_extraction
-from database.models import City
+from database.schemas import City
 
 client = OpenAI(api_key="sk-...", base_url="https://openrouter.ai/api/v1")
 
@@ -361,7 +361,7 @@ Final Markdown ✓
 
 ### How to Extend
 
-1. **New extraction class?** Add model to `database/models.py` and prompt to `extraction/prompts/`
+1. **New extraction class?** Add model to `database/schemas.py` and prompt to `extraction/prompts/`
 2. **Different PDF pipeline?** Modify `pdf2markdown/pdf_to_markdown.py`
 3. **Custom mapping?** Edit `mapping/mappers/`
 

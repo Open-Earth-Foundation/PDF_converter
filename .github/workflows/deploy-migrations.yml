@@ -1,0 +1,45 @@
+name: Deploy Database Migrations to EKS Develop
+
+permissions:
+  contents: read
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: ["main"]
+    paths:
+      - "database/**"
+      - "migrate.py"
+      - "k8s/pdf-converter-db-configmap.yml"
+      - "k8s/pdf-converter-migrate.yml"
+      - ".github/workflows/deploy-migrations.yml"
+  push:
+    paths:
+      - "database/**"
+      - "migrate.py"
+      - "k8s/pdf-converter-db-configmap.yml"
+      - "k8s/pdf-converter-migrate.yml"
+      - ".github/workflows/deploy-migrations.yml"
+    branches: ["main"]
+
+jobs:
+  deployToEKS:
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID_EKS_DEV_USER }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY_EKS_DEV_USER }}
+      EKS_DEV_NAME: ${{ secrets.EKS_DEV_NAME }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Creating kubeconfig file
+        run: aws eks update-kubeconfig --name ${{secrets.EKS_DEV_NAME}} --region us-east-1
+
+      - name: Testing connection to EKS
+        run: kubectl get pods -n default
+
+      - name: Deploying database migrations
+        run: |
+          kubectl apply -f k8s/pdf-converter-db-configmap.yml -n default
+          kubectl create -f k8s/pdf-converter-migrate.yml -n default
