@@ -10,9 +10,9 @@ from alembic import command
 from alembic.config import Config
 from dotenv import load_dotenv
 
-REPO_ROOT = Path(__file__).resolve().parent
+REPO_ROOT = Path(__file__).resolve().parent.parent
 ALEMBIC_INI = REPO_ROOT / "alembic.ini"
-VERSIONS_DIR = REPO_ROOT / "database" / "alembic" / "versions"
+VERSIONS_DIR = Path(__file__).resolve().parent / "alembic" / "versions"
 
 
 def require_database_url() -> None:
@@ -20,7 +20,7 @@ def require_database_url() -> None:
         raise RuntimeError(
             "DATABASE_URL is not set.\n\n"
             "Example:\n"
-            "  postgresql+psycopg://pdf_user:pdf_pass@localhost:5432/pdf_converter"
+            "  postgresql+psycopg://urbind:urbind@dev-db-aurora.cluster-c5ipsfxjhb0m.us-east-1.rds.amazonaws.com:5432/urbind"
         )
 
 

@@ -21,5 +21,5 @@ spec:
           args:
             - |
               echo "Running database migrations..."
-              python migrate.py upgrade head
+              python database/migrate.py upgrade head
               echo "Done."

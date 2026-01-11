@@ -87,7 +87,7 @@ This includes:
 
 ## Running Migrations
 
-Migrations are managed using **Alembic**. The `migrate.py` script in the project root provides a CLI interface.
+Migrations are managed using **Alembic**. The `database/migrate.py` script provides a CLI interface.
 
 ### How Migrations Work
 
@@ -99,13 +99,13 @@ Migrations are managed using **Alembic**. The `migrate.py` script in the project
 
 ```bash
 # Apply all pending migrations to HEAD
-python migrate.py upgrade head
+python database/migrate.py upgrade head
 
 # Apply a specific number of migrations
-python migrate.py upgrade +2
+python database/migrate.py upgrade +2
 
 # Apply up to a specific revision
-python migrate.py upgrade <revision_id>
+python database/migrate.py upgrade <revision_id>
 ```
 
 **Example:**
@@ -122,7 +122,7 @@ python migrate.py upgrade head
 2. **Create a migration file**
 
 ```bash
-python migrate.py revision -m "Add new_field to City"
+python database/migrate.py revision -m "Add new_field to City"
 ```
 
 This creates a new file in `database/alembic/versions/` like:
@@ -148,20 +148,20 @@ def downgrade() -> None:
 4. **Apply the migration**
 
 ```bash
-python migrate.py upgrade head
+python database/migrate.py upgrade head
 ```
 
 ### Rollback Migrations
 
 ```bash
 # Rollback the last applied migration
-python migrate.py downgrade -1
+python database/migrate.py downgrade -1
 
 # Rollback to a specific revision
-python migrate.py downgrade <revision_id>
+python database/migrate.py downgrade <revision_id>
 
 # Rollback all migrations
-python migrate.py downgrade base
+python database/migrate.py downgrade base
 ```
 
 ### Check Migration Status
@@ -486,8 +486,8 @@ python migrate.py upgrade head
 ### Create and Apply Migration
 
 ```bash
-python migrate.py revision -m "Your migration description"
-python migrate.py upgrade head
+python database/migrate.py revision -m "Your migration description"
+python database/migrate.py upgrade head
 ```
 
 ### Kubernetes Deployment

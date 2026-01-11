@@ -9,14 +9,12 @@ on:
     branches: ["main"]
     paths:
       - "database/**"
-      - "migrate.py"
       - "k8s/pdf-converter-db-configmap.yml"
       - "k8s/pdf-converter-migrate.yml"
       - ".github/workflows/deploy-migrations.yml"
   push:
     paths:
       - "database/**"
-      - "migrate.py"
       - "k8s/pdf-converter-db-configmap.yml"
       - "k8s/pdf-converter-migrate.yml"
       - ".github/workflows/deploy-migrations.yml"
