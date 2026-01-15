@@ -1,20 +1,12 @@
-# agent.md
+# agents.md
 
 ## Purpose
 
 This repository contains a single AI project. All contributions must optimize for:
 
-* **Readability**: clear docs, clean structure, no dead/unused code, and logical separation of concerns.
-* **Maintainability**: reusable utilities, configuration-driven behavior, proper logging, minimal duplication.
-* **Consistency**: a similar “feel” across modules/scripts via shared patterns, formatting, and conventions.
-
----
-
-## Repository rules
-
-* **One repository per AI project**
-* **No monorepo for all AI projects**
-* **Do not split one AI project across multiple repos**
+- **Readability**: clear docs, clean structure, no dead or unused code, and a logical separation of concerns.
+- **Maintainability**: reusable utilities, configuration-driven behavior, proper logging, minimal duplication.
+- **Consistency**: a similar feel across modules and scripts via shared patterns, formatting, and conventions.
 
 ---
 
@@ -24,19 +16,19 @@ This repository contains a single AI project. All contributions must optimize fo
 
 Every repo must have a `README.md` with:
 
-* Install instructions
-* Run instructions (local + docker)
-* Required environment variables (documented, not secrets)
-* Common workflows (tests, lint/format)
+- A short description of the project
+- Install instructions using `pip` or `uv`
+- Run instructions (local and Docker), including required environment variables, for example: `docker run ... --env-file ...`
+- Common workflows, for example running `pytest`
 
 ### Runnable scripts must have a top-level docstring
 
 Every script intended to be executed must include a **top-level docstring** describing:
 
-* What the script does (brief)
-* Inputs
-* Outputs
-* Usage examples
+- What the script does (brief)
+- Inputs (files, env vars, CLI args)
+- Outputs (files, stdout, DB writes, API responses)
+- Usage examples (run as a module)
 
 **Docstring template:**
 
@@ -50,8 +42,8 @@ Inputs:
 Outputs:
 - <files, stdout, DB writes, API responses, etc.>
 
-Usage:
-- python app/scripts/<script_name>.py --arg1 ... --arg2 ...
+Usage (from project root):
+- python -m app.scripts.<script_name> --arg1 ...
 """
 ```
 
@@ -61,53 +53,63 @@ Usage:
 
 ### Separation of concerns is mandatory
 
-* API calls go into a dedicated module (e.g. `services/`).
-* Helpers go into `utils/` (global) or `modules/<module>/utils/` (module-local).
-* Standalone runnable scripts go into `scripts/` (global) or `modules/<module>/scripts/` (module-local).
-* Prompts go into `prompts/` (global) or `modules/<module>/prompts/` (module-local).
-* Data structures (e.g. Pydantic models) should be centralized in `models.py` (global and/or module-level `models.py`).
+- API calls go into a dedicated module, for example `services/`.
+- Helpers go into `utils/` (global) or `modules/<module>/utils/` (module-local).
+- Standalone runnable scripts go into `scripts/` (global) or `modules/<module>/scripts/` (module-local).
+- Prompts go into `prompts/` (global) or `modules/<module>/prompts/` (module-local).
+- Data structures (for example Pydantic models) should be centralized in `models.py` (global and or module-level `models.py`).
 
 ### Folder placement must follow the hierarchy
 
+All directories containing code must include an `__init__.py` file to ensure proper package resolution.
+
 Use this structure:
 
-```markdown
+```text
 project_root/
 │
-├── app/                        # Main application code
-│   ├── main.py                 # Entry point for the app
-│   ├── run.sh                  # Optional startup script
-│   ├── utils/                  # Utility modules (global)
-│   ├── services/               # API calls, DB connections, external integrations
-│   ├── scripts/                # Standalone scripts (global)
-│   ├── prompts/                # LLM prompts (global)
-│   ├── models.py               # Global Pydantic models
+├── app/                          # Main application code
+│   ├── __init__.py
+│   ├── main.py                   # Entry point for the app
+│   ├── run.sh                    # Optional startup script
+│   ├── utils/                    # Utility modules (global)
+│   │   ├── __init__.py
+│   │   └── logging_config.py
+│   ├── services/                 # API calls, DB connections, external integrations
+│   ├── scripts/                  # Standalone scripts (global)
+│   ├── prompts/                  # LLM prompts (global) as markdown files
+│   ├── models.py                 # Global Pydantic models
 │   │
-│   └── modules/                # Core modules/features
-│       └── <module_name>/      # e.g. plan_creator, prioritizer
-│           ├── utils/          # Module-specific utilities
-│           ├── services/       # Module-specific integrations (if needed)
-│           ├── scripts/        # Module-specific scripts
-│           ├── prompts/        # Module prompts
-│           ├── module.py       # Module logic (or api.py, etc.)
-│           └── models.py       # Module-level Pydantic models
+│   └── modules/                  # Core modules and features
+│       ├── __init__.py
+│       └── <module_name>/        # e.g. plan_creator, prioritizer
+│           ├── __init__.py
+│           ├── utils/            # Module-specific utilities
+│           ├── services/         # Module-specific integrations (if needed)
+│           ├── scripts/          # Module-specific scripts
+│           ├── prompts/          # Module prompts
+│           ├── module.py         # Module logic (or api.py, etc.)
+│           └── models.py         # Module-level Pydantic models
 │
-├── k8s/                        # Kubernetes deployment files
+├── tests/                        # pytest test suite
+├── k8s/                          # Kubernetes deployment files
 │   └── deployment.yaml
-│
-├── .github/
+├── .github/                      # CI/CD
 │   └── workflows/
 │
 ├── .gitignore
 ├── .dockerignore
 ├── Dockerfile
-├── requirements.txt
-├── requirements-dev.txt        # Dev-only heavy packages
+├── pyproject.toml                # Dependency source of truth
 ├── README.md
 ├── LICENSE.md
-├── .env
-├── .env.example
+├── .env.example                  # documents required env vars (no real secrets)
 ```
+
+Notes:
+
+- Do not commit `.env`. Use `.env.example` to document required variables.
+- If you need non-code assets (sample prompts, fixtures, tiny sample data), put them in a clearly named folder, for example `assets/` or `tests/fixtures/`.
 
 ---
 
@@ -119,6 +121,7 @@ Any script that can be executed standalone must:
 2. Have a top-level docstring (see template above)
 3. Use `argparse` for inputs
 4. Include a `__main__` entry point
+5. Avoid side effects at import time (do work inside `main()`)
 
 **Minimum required pattern:**
 
@@ -126,6 +129,7 @@ Any script that can be executed standalone must:
 import argparse
 import logging
 
+from app.utils.logging_config import setup_logger
 
 logger = logging.getLogger(__name__)
 
@@ -145,47 +149,8 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO)
+    setup_logger()
     main()
-```
-
----
-
-## Formatting
-
-### Python: Black
-
-* All Python code must be formatted with **Black**.
-* Default Black behavior is expected (no custom style unless repo explicitly configures it).
-
-**VSCode `settings.json` snippet:**
-
-```json
-{
-  "editor.formatOnSave": true,
-  "[python]": {
-    "editor.defaultFormatter": "ms-python.black-formatter"
-  },
-  "[typescript]": {
-    "editor.defaultFormatter": "esbenp.prettier-vscode"
-  },
-  "[javascript]": {
-    "editor.defaultFormatter": "esbenp.prettier-vscode"
-  },
-  "[typescriptreact]": {
-    "editor.defaultFormatter": "esbenp.prettier-vscode"
-  }
-}
-```
-
-**Reference info (internal context / original sources):**
-
-```text
-Black formatter extension:
-https://marketplace.visualstudio.com/items?itemName=ms-python.black-formatter
-
-Internal Slack reference (OpenEarthFoundation workspace):
-https://openearthfoundation.slack.com/archives/C03P5FN36AG/p1719494098264839
 ```
 
 ---
@@ -194,74 +159,110 @@ https://openearthfoundation.slack.com/archives/C03P5FN36AG/p1719494098264839
 
 ### Prefer reuse over duplication
 
-* If logic is reusable, it belongs in `utils/` (global) or `modules/<module>/utils/` (local).
-* Do not copy/paste functions across scripts.
-* Import shared helpers instead.
+- If logic is reusable, it belongs in `app/utils/` (global) or `app/modules/<module>/utils/` (local).
+- Do not copy or paste functions across scripts.
+- Import shared helpers instead.
 
-### Logging (required)
+### Logging is required
 
-* Use Python’s `logging` module (not `print`) for operational output.
-* Log key steps and important parameters (avoid logging secrets).
-* Errors should be logged with stack traces where helpful.
+- Use Python’s `logging` module, do not use `print`, except in rare CLI UX cases where it is explicitly intended.
+- Use `app/utils/logging_config.py` to configure logging.
+- `logging_config.py` usually contains the following code:
+
+```python
+import logging
+import os
+
+
+def setup_logger() -> None:
+    env_level = os.getenv("LOG_LEVEL", "INFO").upper().strip()
+    level = getattr(logging, env_level, logging.INFO)
+    logging.basicConfig(
+        level=level,
+        format="%(asctime)s %(filename)s:%(lineno)d - %(levelname)s - %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+        force=True,
+    )
+
+
+__all__ = ["setup_logger"]
+```
+
+- Log key steps and important parameters, do not log secrets.
+- Log exceptions with stack traces where helpful.
 
 ### Remove dead code
 
-* No unused functions, no commented-out blocks, no “maybe later” code.
-* If it’s not used and not needed now, delete it.
+- No unused functions, no commented-out blocks, no maybe later code.
+- If it is not used and not needed now, delete it.
+
+### Type hints
+
+- All function signatures must have Python type hints.
+- Prefer returning concrete types, avoid `Any` unless you have a good reason.
+
+### Path handling
+
+- Use `pathlib.Path` instead of `os.path` or string manipulation.
+
+### Prefer simple functions over heavy class hierarchies
+
+- Prefer functional code and small, testable functions.
+- Use classes only when they clearly reduce complexity (for example a small client wrapper), keep them thin.
+
+### Module imports
+
+- Strictly use **absolute imports**, for example `from app.utils.foo import bar`. Do not use relative imports.
+- Always run scripts as modules using `python -m ...` from the project root.
+
+### Prefer clarity over cleverness
+
+- Prefer clear, explicit code over overly compact code.
+- Avoid dense one-liners, deeply nested comprehensions, and overly abstract helper chains when they reduce readability.
+- Optimize for the next person reading the code, not for brevity.
 
 ---
 
 ## Configuration and secrets
 
-* **Secrets go only in `.env`** (API keys, tokens, credentials).
-* Provide a `.env.example` that documents required env vars (without real secrets).
-* Model/provider selection (e.g. model names) must be **configuration-driven**:
+- Secrets go only in the runtime environment. For local dev, that typically means a `.env` file that is not committed.
+- Provide a `.env.example` that documents required env vars without real secrets.
+- Model and provider selection must be configuration-driven:
+  - Model names should be set via env vars or via a single config module that reads env vars.
+- Prefer one configuration module or file that centralizes provider and model settings.
+- Do not scatter configuration constants across multiple unrelated scripts.
 
-  * Model names should be set via env vars (or a config file that reads env vars).
-* Prefer **one configuration module/file** that centralizes model/provider settings.
-* Do not scatter configuration constants across multiple unrelated scripts.
+---
+
+## Dependencies
+
+- `pyproject.toml` is the source of truth for dependencies.
+- If you also maintain `requirements.txt` files for `pip`, they must be kept in sync with `pyproject.toml` and documented in `README.md`.
+- Prefer not adding new dependencies unless necessary.
 
 ---
 
 ## Testing
 
-* Use **pytest** for tests.
-* New features should include tests where practical.
-* Bug fixes should include a regression test whenever feasible.
-
----
-
-## Pull requests
-
-### PR scope
-
-* PRs are done on **ticket level**.
-* Exceptions: pure data updates with no code changes (still notify the team).
-
-### PR description template
-
-Include:
-
-* **Main purpose**: What does this PR do?
-* **Major/breaking changes**: Any API changes, behavior changes, config changes?
-* **Run instructions**: How to run locally + tests to verify
+- Use `pytest` for tests.
+- New features should include tests where practical.
+- Bug fixes should include a regression test whenever feasible.
 
 ---
 
 ## CI/CD and deployment
 
-* Each AI project should include a **Docker setup** and documented commands in `README.md`.
+- Each AI project should include a Docker setup and documented commands in `README.md`.
 
-**Expected examples:**
+Expected examples:
 
 ```bash
 docker build -t my-great-app .
 docker run -it --rm -p 8000:8000 --env-file .env my-great-app
 ```
 
-* Deployment target is typically **k8s on AWS EKS** if needed.
-* Serverless (e.g. AWS Lambda) may be considered for AI features where appropriate.
-* CI/CD must run pytest on PRs and merges.
+- Deployment target is typically Kubernetes on AWS EKS if needed.
+- CI must run `pytest` on PRs and merges.
 
 ---
 
@@ -269,24 +270,21 @@ docker run -it --rm -p 8000:8000 --env-file .env my-great-app
 
 When making changes:
 
-* Keep changes minimal and scoped to the task.
-* Respect the existing folder structure; move files if they’re in the wrong place.
-* Update `README.md` if setup/run behavior changes.
-* If you add a runnable script, ensure it follows the standalone script rules.
-* If you add dependencies:
-
-  * Update `requirements.txt` / `requirements-dev.txt` accordingly.
-  * Prefer not adding new deps unless necessary.
+- Keep changes minimal and scoped to the task.
+- Respect the existing folder structure and move files if they are in the wrong place.
+- Update `README.md` if setup or run behavior changes.
+- If you add a runnable script, ensure it follows the standalone script rules.
+- If you add dependencies, update `pyproject.toml` accordingly.
 
 ---
 
 ## Quick checklist for contributions
 
-* [ ] Code formatted with Black
-* [ ] No duplication (helpers in utils where appropriate)
-* [ ] Clear separation of concerns (services vs utils vs scripts)
-* [ ] Runnable scripts: docstring + argparse + `__main__`
-* [ ] README updated if run/install changed
-* [ ] Logging used instead of print
-* [ ] pytest coverage added/updated when feasible
-* [ ] PR description includes purpose, breaking changes, run instructions
+- [ ] `__init__.py` present in all code folders
+- [ ] No duplication (helpers in utils where appropriate)
+- [ ] Clear separation of concerns (services vs utils vs scripts)
+- [ ] Runnable scripts: docstring, argparse, `__main__`
+- [ ] README updated if install, run, or other documentation changed
+- [ ] Logging used instead of print
+- [ ] pytest coverage added or updated when feasible
+- [ ] Type hints present in all function signatures
