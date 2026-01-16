@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.engine import Engine
+from sqlalchemy.orm import Session, sessionmaker
 
 from database.config import DBSettings
 
 
-def create_db_engine(*, settings: DBSettings):
+def create_db_engine(*, settings: DBSettings) -> Engine:
     """
     Create a synchronous SQLAlchemy engine.
 
@@ -19,6 +20,6 @@ def create_db_engine(*, settings: DBSettings):
     )
 
 
-def create_session_factory(engine):
+def create_session_factory(engine: Engine) -> sessionmaker[Session]:
     """Create a session factory (use Session() context manager for unit of work)."""
     return sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)

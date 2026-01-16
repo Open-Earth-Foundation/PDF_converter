@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 
 from openai.types.responses import ResponseFunctionToolCall, ResponseOutputMessage
 
-from .data_utils import extract_text
+from extraction.utils.data_utils import extract_text
 
 if TYPE_CHECKING:
     from openai.types.responses import Response

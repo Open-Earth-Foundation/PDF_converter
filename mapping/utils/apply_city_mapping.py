@@ -119,7 +119,7 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def main() -> None:
+def main() -> int:
     args = parse_args()
     input_dir: Path = args.input_dir
     output_dir: Path = args.output_dir
@@ -177,20 +177,19 @@ def main() -> None:
             {"file": fname, "status": "copied", "records": len(records), "city_fields_set": 0, "written": args.apply}
         )
 
-    print(f"Canonical cityId: {canonical_city_id}")
+    LOGGER.info("Canonical cityId: %s", canonical_city_id)
     for result in results:
-        print(
-            f"{result['file']}: {result['status']} "
-            f"(records={result.get('records', result.get('source_records', 0))}, "
-            f"city_fields_set={result.get('city_fields_set', 0)}, "
-            f"written={'yes' if result.get('written') else 'no'})"
+        LOGGER.info(
+            "%s: %s (records=%s, city_fields_set=%s, written=%s)",
+            result["file"],
+            result["status"],
+            result.get("records", result.get("source_records", 0)),
+            result.get("city_fields_set", 0),
+            "yes" if result.get("written") else "no",
         )
 
     if not args.apply:
-        print("\nDry run only. Re-run with --apply to write mapped files.")
+        LOGGER.info("Dry run only. Re-run with --apply to write mapped files.")
     else:
-        print(f"\nMapped files written to: {output_dir}")
-
-
-if __name__ == "__main__":
-    main()
+        LOGGER.info("Mapped files written to: %s", output_dir)
+    return 0

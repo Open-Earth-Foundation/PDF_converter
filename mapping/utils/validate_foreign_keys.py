@@ -2,15 +2,15 @@
 Quick FK checker for step3 LLM outputs.
 
 Run:
-    python -m mapping.scripts.validate_foreign_keys [path-to-step3-dir]
-Defaults to mapping/workflow_output/step3_llm when no path is provided.
+    python -m mapping.scripts.validate_foreign_keys path/to/step3_llm
+    python -m mapping.scripts.validate_foreign_keys --base-dir path/to/step3_llm
+Defaults to mapping/workflow_output/step3_llm when no base dir is provided.
 """
 
 from __future__ import annotations
 
-import json
+import argparse
 import logging
-import sys
 from pathlib import Path
 from typing import Iterable
 
@@ -134,10 +134,30 @@ def find_fk_issues(
     return issues
 
 
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Validate FK coverage for mapping outputs.")
+    parser.add_argument(
+        "base_dir",
+        type=Path,
+        nargs="?",
+        default=None,
+        help=f"Directory containing step3 LLM outputs (default: {BASE_DIR})",
+    )
+    parser.add_argument(
+        "--base-dir",
+        dest="base_dir_override",
+        type=Path,
+        default=None,
+        help="Override base directory (same as positional base_dir).",
+    )
+    return parser.parse_args()
+
+
 def main() -> int:
-    base_dir = Path(sys.argv[1]) if len(sys.argv) > 1 else BASE_DIR
+    args = parse_args()
+    base_dir = args.base_dir_override or args.base_dir or BASE_DIR
     if not base_dir.exists():
-        print(f"Base directory does not exist: {base_dir}")
+        LOGGER.error("Base directory does not exist: %s", base_dir)
         return 1
 
     records_by_table: dict[str, list[dict]] = {}
@@ -154,17 +174,13 @@ def main() -> int:
     issues = find_fk_issues(records_by_table, pk_index)
 
     if missing_files:
-        print("Missing files:", ", ".join(sorted(missing_files)))
-    print(f"Checked {len(TABLE_CONFIG)} tables in {base_dir}")
+        LOGGER.warning("Missing files: %s", ", ".join(sorted(missing_files)))
+    LOGGER.info("Checked %d tables in %s", len(TABLE_CONFIG), base_dir)
     if not issues:
-        print("No FK issues found.")
+        LOGGER.info("No FK issues found.")
         return 0
 
-    print(f"Found {len(issues)} FK issues:")
+    LOGGER.warning("Found %d FK issues:", len(issues))
     for table, idx, field, msg in issues:
-        print(f"- {table} record #{idx} field {field}: {msg}")
+        LOGGER.warning("- %s record #%s field %s: %s", table, idx, field, msg)
     return 2
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())

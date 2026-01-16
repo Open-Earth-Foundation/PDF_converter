@@ -10,7 +10,11 @@ import yaml
 LLM_CONFIG_PATH = Path(__file__).resolve().parent.parent / "llm_config.yml"
 
 DEFAULT_LLM_CONFIG: Dict[str, Dict[str, Any]] = {
-    "pdf2markdown": {"model": "google/gemini-3-flash-preview", "temperature": 0.0},
+    "pdf2markdown": {
+        "model": "google/gemini-3-flash-preview",
+        "temperature": 0.0,
+        "ocr_model": "mistral-ocr-latest",
+    },
     "extraction": {"model": "google/gemini-3-flash-preview", "temperature": 0.0},
     "mapping": {"model": "google/gemini-3-flash-preview", "temperature": 0.0},
 }

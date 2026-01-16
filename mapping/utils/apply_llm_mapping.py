@@ -10,6 +10,7 @@ Workflow expectation:
 from __future__ import annotations
 
 import argparse
+import logging
 import os
 import uuid
 from pathlib import Path
@@ -43,8 +44,7 @@ EXTRACTION_DIR = ROOT_DIR / "extraction" / "output"
 DEFAULT_INPUT_DIR = CITY_MAPPED_DIR if CITY_MAPPED_DIR.exists() else EXTRACTION_DIR
 DEFAULT_OUTPUT_DIR = MAPPING_DIR / "mapped_output"
 
-
-
+LOGGER = logging.getLogger(__name__)
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="LLM-assisted foreign key mapping (modular).")
@@ -58,7 +58,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--model",
         default=None,
-        help="LLM model name (defaults to llm_config.yml mapping.model or env OPENROUTER_MODEL).",
+        help="LLM model name (defaults to llm_config.yml mapping.model).",
     )
     parser.add_argument("--apply", action="store_true", help="Persist mapped JSON files.")
     return parser.parse_args()
@@ -164,24 +164,30 @@ def run_llm_mapping(
     return outputs
 
 
-def main() -> None:
+def main() -> int:
     args = parse_args()
     llm_cfg = load_llm_config().get("mapping", {})
+    model_name = args.model or llm_cfg.get("model")
+    if not model_name:
+        raise RuntimeError("Mapping model not configured. Set mapping.model in llm_config.yml.")
+
     outputs = run_llm_mapping(
         input_dir=args.input_dir,
         output_dir=args.output_dir,
-        model_name=args.model or llm_cfg.get("model") or os.getenv("OPENROUTER_MODEL", "google/gemini-3-flash-preview"),
+        model_name=model_name,
         apply=args.apply,
     )
 
     for fname, payload in outputs.items():
-        print(f"{fname}: records={len(payload)} {'(written)' if args.apply else '(dry-run)'}")
+        LOGGER.info(
+            "%s: records=%s %s",
+            fname,
+            len(payload),
+            "(written)" if args.apply else "(dry-run)",
+        )
 
     if args.apply:
-        print(f"\nMapped files written to: {args.output_dir}")
+        LOGGER.info("Mapped files written to: %s", args.output_dir)
     else:
-        print("\nDry run only. Re-run with --apply to persist.")
-
-
-if __name__ == "__main__":
-    main()
+        LOGGER.info("Dry run only. Re-run with --apply to persist.")
+    return 0

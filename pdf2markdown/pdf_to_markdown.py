@@ -1,21 +1,20 @@
 #!/usr/bin/env python3
-"""Convert PDFs to Markdown using Mistral OCR with optional OpenRouter vision refinement.
+"""
+Brief: Convert PDFs to Markdown using Mistral OCR with optional vision refinement.
 
-Usage (from repo root):
-    python -m pdf2markdown.pdf_to_markdown --input documents/sample.pdf [--output-dir pdf2markdown/output]
-
-Flags:
+Inputs:
 - --input: PDF file to process (required)
-- --output-dir: where OCR artefacts go (default: pdf2markdown/output)
-- --no-images: skip saving page images
-- --save-response: persist raw OCR response JSON
-- --max-upload-bytes: split large PDFs per page
-- --vision-model: override vision model (defaults to llm_config.yml pdf2markdown.model)
-- --vision-temperature: override vision temperature (defaults to llm_config.yml pdf2markdown.temperature)
+- --output-dir: output directory for OCR artifacts
+- --no-images/--save-response/--max-upload-bytes/--vision-model/--vision-temperature
+- Env: MISTRAL_API_KEY, OPENROUTER_API_KEY, OPENROUTER_BASE_URL, OCR_MODEL, VISION_MODEL
+- Config: llm_config.yml (pdf2markdown.model, pdf2markdown.temperature, pdf2markdown.ocr_model)
 
-Vision refinement:
-- Requires OPENROUTER_API_KEY and (optionally) OPENROUTER_BASE_URL.
-- If vision model is empty, the vision step is skipped.
+Outputs:
+- Markdown files, images, and OCR response artifacts in the output directory
+- Logs to stdout/stderr
+
+Usage (from project root):
+- python -m pdf2markdown.pdf_to_markdown --input documents/sample.pdf
 """
 
 from __future__ import annotations
@@ -52,7 +51,7 @@ def main(args: argparse.Namespace) -> int:
 
     llm_cfg = load_llm_config().get("pdf2markdown", {})
 
-    ocr_model = (os.environ.get("OCR_MODEL") or "mistral-ocr-latest").strip()
+    ocr_model = (os.environ.get("OCR_MODEL") or llm_cfg.get("ocr_model", "")).strip()
     vision_model = (args.vision_model or os.environ.get("VISION_MODEL") or llm_cfg.get("model", "")).strip()
     if vision_model.lower() in {"", "none", "off", "disable"}:
         vision_model = ""
@@ -95,13 +94,8 @@ def main(args: argparse.Namespace) -> int:
     return 0 if successes else 2
 
 
-if __name__ == "__main__":
-    # Load environment variables
-    load_dotenv()
-
-    # Setup logging
-    setup_logger()
-
+def parse_args() -> argparse.Namespace:
+    """Parse command-line arguments."""
     parser = argparse.ArgumentParser(
         description="Convert PDFs to Markdown using Mistral OCR.",
     )
@@ -128,8 +122,11 @@ if __name__ == "__main__":
         "--max-upload-bytes",
         type=int,
         default=int(os.environ.get("MAX_UPLOAD_BYTES", str(10 * 1024 * 1024))),
-        help="Maximum PDF size (bytes) to send in a single OCR request before splitting per page (default: 10485760). "
-        "Smaller values reduce per-request payload and enable parallel processing (up to 3 requests).",
+        help=(
+            "Maximum PDF size (bytes) to send in a single OCR request before splitting per page "
+            "(default: 10485760). Smaller values reduce per-request payload and enable parallel "
+            "processing (up to 3 requests)."
+        ),
     )
     parser.add_argument(
         "--vision-model",
@@ -142,5 +139,10 @@ if __name__ == "__main__":
         default=None,
         help="Override vision temperature (defaults to llm_config.yml pdf2markdown.temperature).",
     )
-    args = parser.parse_args()
-    raise SystemExit(main(args))
+    return parser.parse_args()
+
+
+if __name__ == "__main__":
+    load_dotenv()
+    setup_logger()
+    raise SystemExit(main(parse_args()))

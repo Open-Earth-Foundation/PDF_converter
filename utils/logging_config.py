@@ -2,7 +2,7 @@ import logging
 import os
 
 
-def setup_logger():
+def setup_logger() -> None:
     env_level = os.getenv("LOG_LEVEL", "INFO").upper().strip()
     level = getattr(logging, env_level, logging.INFO)
     logging.basicConfig(
