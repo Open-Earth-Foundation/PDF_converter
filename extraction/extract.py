@@ -61,6 +61,7 @@ def run_class_extraction(
     user_template: str,
     markdown_text: str,
     model_cls: Type[BaseModel],
+    db_model_name: str,
     output_dir: Path,
     max_rounds: int,
     config: dict | None = None,
@@ -69,13 +70,17 @@ def run_class_extraction(
     Run extraction for a single Pydantic model class using chat.completions with tools.
 
     Args mirror the CLI entry point.
+    
+    Args:
+        db_model_name: The database model name (for output file naming and context loading).
+                       Used when extraction uses a different schema (e.g., VerifiedCityTarget).
     """
-    output_path = output_dir / f"{model_cls.__name__}.json"
+    output_path = output_dir / f"{db_model_name}.json"
     stored_instances = load_existing(output_path)
     seen_hashes = {json.dumps(entry, sort_keys=True, ensure_ascii=False) for entry in stored_instances}
     base_extra_body = dict(extra_body or {})
 
-    class_context = escape_braces(load_class_context(model_cls.__name__))
+    class_context = escape_braces(load_class_context(db_model_name))
     user_prompt = user_template.format(
         class_name=model_cls.__name__,
         class_context=class_context,
@@ -84,7 +89,7 @@ def run_class_extraction(
         markdown=escape_braces(markdown_text),
     )
 
-    LOGGER.info("Starting extraction for %s (existing %d records).", model_cls.__name__, len(stored_instances))
+    LOGGER.info("Starting extraction for %s (existing %d records).", db_model_name, len(stored_instances))
     messages: list[dict] = [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_prompt},
@@ -176,7 +181,7 @@ def run_class_extraction(
             fake_call = type("ToolCall", (), {"name": name, "arguments": args, "call_id": tc.id})
 
             if name == "record_instances":
-                payload, added = parse_record_instances(fake_call, model_cls, seen_hashes, stored_instances)
+                payload, added = parse_record_instances(fake_call, model_cls, seen_hashes, stored_instances, source_text=markdown_text)
                 if added:
                     persist_instances(output_path, stored_instances)
                     LOGGER.info(
@@ -352,7 +357,26 @@ def main() -> None:
         LOGGER.warning("No classes to process.")
         return
 
+    # Map database schema classes to verified schema classes for extraction
+    verified_module = importlib.import_module("extraction.schemas_verified")
+    verified_classes_map = {}
+    for cls_name in ["CityTarget", "EmissionRecord", "CityBudget", "IndicatorValue", "BudgetFunding", "Initiative"]:
+        verified_cls_name = f"Verified{cls_name}"
+        try:
+            verified_cls = getattr(verified_module, verified_cls_name)
+            verified_classes_map[cls_name] = verified_cls
+        except AttributeError:
+            pass
+
     for model_cls in model_classes:
+        # Use verified schema for extraction if available, otherwise use database schema
+        extraction_model_cls = verified_classes_map.get(model_cls.__name__, model_cls)
+        if extraction_model_cls != model_cls:
+            LOGGER.debug(
+                "Using verified schema for %s extraction",
+                model_cls.__name__,
+            )
+
         run_class_extraction(
             client=client,
             model_name=model_name,
@@ -360,7 +384,8 @@ def main() -> None:
             system_prompt=system_prompt,
             user_template=user_template,
             markdown_text=markdown_text,
-            model_cls=model_cls,
+            model_cls=extraction_model_cls,
+            db_model_name=model_cls.__name__,  # Use DB schema name for output file and context
             output_dir=output_dir,
             max_rounds=max_rounds,
             config=config,

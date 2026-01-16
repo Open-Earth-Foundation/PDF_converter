@@ -179,11 +179,23 @@ def parse_record_instances(
     model_cls: Type[BaseModel],
     seen_hashes: Set[str],
     stored: List[dict],
+    source_text: str | None = None,
 ) -> tuple[dict, bool]:
     """
     Parse and validate a `record_instances` tool call.
 
-    Returns (result_payload, added_any).
+    For verified schemas with VerifiedField objects, performs quote validation
+    against source text and maps to database format with proof in misc field.
+
+    Args:
+        call: The tool call from OpenAI.
+        model_cls: The Pydantic model class (verified or standard).
+        seen_hashes: Set of seen record hashes to detect duplicates.
+        stored: List to accumulate stored records.
+        source_text: Optional source markdown text for quote validation.
+
+    Returns:
+        Tuple of (result_payload, added_any).
     """
     try:
         args = json.loads(call.arguments or "{}")
@@ -197,6 +209,9 @@ def parse_record_instances(
     accepted: list[dict] = []
     errors: list[str] = []
 
+    # Check if this is a verified schema (by checking for VerifiedField fields)
+    is_verified_schema = _has_verified_fields(model_cls)
+
     for idx, raw in enumerate(raw_items):
         if not isinstance(raw, dict):
             error_msg = f"Item {idx} is not an object; received {type(raw).__name__}."
@@ -204,10 +219,35 @@ def parse_record_instances(
             LOGGER.debug("[%s] Validation error: %s", model_cls.__name__, error_msg)
             continue
         try:
-            normalized_raw = normalize_extracted_item(raw, model_cls)
-            normalized_raw = auto_fill_missing_ids(normalized_raw, model_cls)
-            parsed = model_cls.model_validate(normalized_raw)
-            normalised = to_json_ready(parsed)
+            # Validate and parse the verified object
+            parsed = model_cls.model_validate(raw)
+
+            # If this is a verified schema and we have source text, perform mapping
+            if is_verified_schema and source_text:
+                from extraction.utils.verified_utils import map_verified_to_db
+                mapped_output, validation_errors = map_verified_to_db(parsed, source_text, None)
+
+                if validation_errors:
+                    # Reject the record if any quote validation failed
+                    error_details = "; ".join([f"{k}: {v}" for k, v in validation_errors.items()])
+                    error_msg = f"Item {idx} quote validation failed: {error_details}"
+                    errors.append(error_msg)
+                    LOGGER.warning(
+                        "[%s] Quote validation failed for item %d: %s",
+                        model_cls.__name__,
+                        idx,
+                        error_details,
+                    )
+                    continue
+
+                normalised = mapped_output
+            else:
+                # Standard schema or no source text: use normal processing
+                normalized_raw = normalize_extracted_item(raw, model_cls)
+                normalized_raw = auto_fill_missing_ids(normalized_raw, model_cls)
+                parsed_standard = model_cls.model_validate(normalized_raw)
+                normalised = to_json_ready(parsed_standard)
+
         except ValidationError as exc:
             # Provide more helpful error messages for common missing fields
             missing_fields = []
@@ -261,6 +301,60 @@ def parse_record_instances(
         )
 
     return result, bool(accepted)
+
+
+def _has_verified_fields(model_cls: Type[BaseModel]) -> bool:
+    """
+    Check if a model class contains any VerifiedField fields.
+    
+    Handles both VerifiedField[T] and Optional[VerifiedField[T]] types.
+
+    Args:
+        model_cls: The Pydantic model class to check.
+
+    Returns:
+        True if the model has VerifiedField fields, False otherwise.
+    """
+    try:
+        from extraction.utils.verified_field import VerifiedField
+        import types
+        from typing import Union
+
+        for field_info in model_cls.model_fields.values():
+            origin = get_origin(field_info.annotation)
+            
+            # Direct VerifiedField[T]
+            if origin is VerifiedField or field_info.annotation is VerifiedField:
+                return True
+
+            # Pydantic generics produce specialized subclasses; accept subclasses too.
+            if inspect.isclass(field_info.annotation):
+                try:
+                    if issubclass(field_info.annotation, VerifiedField):
+                        return True
+                except TypeError:
+                    pass
+            
+            # Optional[VerifiedField[T]] = Union[VerifiedField[T], None]
+            union_types = (Union,)
+            if getattr(types, "UnionType", None) is not None:
+                union_types = (Union, types.UnionType)
+
+            if origin in union_types:
+                args = get_args(field_info.annotation)
+                for arg in args:
+                    if get_origin(arg) is VerifiedField or arg is VerifiedField:
+                        return True
+                    if inspect.isclass(arg):
+                        try:
+                            if issubclass(arg, VerifiedField):
+                                return True
+                        except TypeError:
+                            pass
+        
+        return False
+    except (ImportError, AttributeError):
+        return False
 
 
 def handle_response_output(

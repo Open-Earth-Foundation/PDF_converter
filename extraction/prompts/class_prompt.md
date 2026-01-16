@@ -24,12 +24,54 @@ Previously extracted {class_name} instances (avoid duplicates):
 
 1. Scan the entire Markdown for all mentions matching {class_name} (tables, lists, paragraphs, inline mentions).
 2. For each instance: populate an object using the exact schema aliases as JSON keys.
-3. Call `record_instances` with the `items` array containing all extracted objects.
+3. **For VerifiedField objects** (fields with `value`, `quote`, `confidence`):
+   - Extract the value from the source
+   - Provide a verbatim quote from the document that supports the value
+   - Assign a confidence score (0.0-1.0) based on clarity
+   - Example: `"targetYear": {{"value": "2030", "quote": "by 2030", "confidence": 0.95}}`
+4. Call `record_instances` with the `items` array containing all extracted objects.
    - Example: `record_instances({{"items": [...], "source_notes": "Found X instances"}})`
-4. If you find zero instances, call `record_instances` with an empty items array OR call `all_extracted` with a reason.
-5. After extracting all instances, call `all_extracted` with a reason explaining the extraction result.
+5. If you find zero instances, call `record_instances` with an empty items array OR call `all_extracted` with a reason.
+6. After extracting all instances, call `all_extracted` with a reason explaining the extraction result.
 
 **IMPORTANT**: Every response must contain tool calls. No plain text responses.
+
+**VerifiedField Examples**:
+
+For a target year field in the schema (quote MUST be verbatim from source):
+```json
+{{
+  "targetYear": {{
+    "value": "2030",
+    "quote": "by 2030",
+    "confidence": 0.95
+  }}
+}}
+```
+
+For an amount field (quote MUST be verbatim from source):
+```json
+{{
+  "totalAmount": {{
+    "value": "5000000",
+    "quote": "5 million euros",
+    "confidence": 0.9
+  }}
+}}
+```
+
+For a field not found in source (quote must be verbatim text that indicates absence):
+```json
+{{
+  "status": {{
+    "value": null,
+    "quote": "status not mentioned",
+    "confidence": 0.85
+  }}
+}}
+```
+
+**CRITICAL**: All quotes MUST be verbatim text from the source document. Paraphrased or inferred quotes will cause record rejection.
 
 Markdown to parse:
 
