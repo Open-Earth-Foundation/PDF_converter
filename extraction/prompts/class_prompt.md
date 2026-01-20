@@ -60,7 +60,7 @@ For an amount field (quote MUST be verbatim from source):
 }}
 ```
 
-For a field not found in source (quote must be verbatim text that indicates absence):
+For a field not found in source (ONLY use null if you can find explicit absence text in document):
 ```json
 {{
   "status": {{
@@ -70,6 +70,14 @@ For a field not found in source (quote must be verbatim text that indicates abse
   }}
 }}
 ```
+⚠️ **ONLY VALID IF** "status not mentioned" or similar text appears verbatim in the source document. Otherwise, OMIT this field entirely.
+
+**CRITICAL: null Values with Quotes**:
+- Use `value: null` ONLY when the document explicitly states the absence (e.g., "not specified", "not available", "N/A")
+- The quote MUST be found verbatim in the source document
+- If the document is silent (just doesn't mention the field), do NOT create a null entry—omit the field instead
+- Example valid: `"quote": "baseline not specified"` (if this exact text is in source)
+- Example invalid: `"quote": "no baseline information found"` (if this exact text is NOT in source)
 
 **CRITICAL**: All quotes MUST be verbatim text from the source document. Paraphrased or inferred quotes will cause record rejection.
 

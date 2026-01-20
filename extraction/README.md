@@ -87,16 +87,26 @@ Certain fields in extraction schemas are marked as "verified" and must include e
    }
    ```
 
-### Confidence Scoring Guidelines
+### Confidence Scoring
+
+**Important**: Confidence scores  are **not used in validation logic**. All records are validated equally by quote matching only (see below).
+
+The LLM is instructed to assign confidence based on text clarity:
 
 - **0.95–1.0**: Clear, unambiguous text (e.g., "by 2030", "80% reduction")
 - **0.8–0.94**: Reasonable inference from clear context (e.g., implied from table headers)
 - **0.5–0.79**: Ambiguous text requiring interpretation (e.g., "around 300", conflicting sources)
-- **Below 0.5**: Highly uncertain; use `null` value instead
+- **Below 0.5**: Highly uncertain; LLM should use `null` value instead
+
+These scores are stored in the `misc` field.
 
 ### Handling Missing Data
 
-If a value is not present in source, use `null` with an appropriate quote:
+**CRITICAL**: `null` values are ONLY valid when backed by an explicit quote from the document.
+
+**Rule**: If a field value is missing from the source, you MUST find evidence text in the document that confirms its absence (e.g., "not specified", "not available", "N/A", "information missing", etc.). The quote must be verbatim from the source.
+
+**Valid Example** (document contains "no baseline specified"):
 
 ```json
 {
@@ -115,10 +125,11 @@ Output JSON remains compatible with the database schema:
 - Proof entries in `misc` are optional for downstream processing
 - Mapping pipeline continues to work without changes
 
-### Behavioral Changes
+### Validation Logic
 
-- **Records Rejected**: Records are rejected if any verified quote is not found in source text
-- **Quote Validation**: All quotes are validated during extraction (see logs for details)
+- **Binary Matching**: Records are **rejected if ANY verified quote is not found** in source text (normalized matching handles whitespace, line breaks, case-insensitivity)
+- **Confidence Ignored**: Confidence scores do not affect acceptance/rejection; validation is purely quote-based
+- **Quote Validation**: All quotes are normalized and searched in source text; if not found, the entire record is rejected
 - **Backward Compatible**: Non-verified schemas work as before; only classes with VerifiedField use this feature
 
 ### Testing

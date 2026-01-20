@@ -47,8 +47,10 @@ For ALL verified fields:
    - Below 0.5: Highly uncertain; prefer null value instead
 
 4. If the exact value cannot be found in source:
-   - Set `value: null` and provide a verbatim quote explaining why (e.g., if document literally says "baseline not specified", use that quote)
+   - Set `value: null` ONLY if you can provide a verbatim quote from the document explaining why (e.g., if document literally says "baseline not specified" or "information not available")
+   - The quote MUST be found verbatim in the source document; if not found, the record WILL BE REJECTED
    - Set `confidence` appropriately (typically 0.8-0.95 for absence confirmation)
+   - If you cannot find evidence text in the document explaining the absence, do NOT include this field in the record
 
 5. The quote will be validated against the source text. It MUST appear verbatim (after normalizing whitespace and line breaks).
    - Examples of valid quotes: "2030", "by 2030", "80% reduction"
