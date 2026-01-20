@@ -1,33 +1,34 @@
-"""Run the full PDF -> Markdown -> Extraction -> Mapping pipeline.
+"""
+Brief: Run the full PDF -> Markdown -> Extraction -> Mapping pipeline.
 
-Steps per PDF:
-1) Convert PDF to Markdown with Mistral OCR (pdf2markdown).
-2) Extract structured JSON from the combined Markdown (extraction).
+Inputs:
+- --input: optional PDF file (defaults to all PDFs in documents/)
+- --no-vision: skip vision refinement
+- --no-mapping: skip mapping stage
+- Env: MISTRAL_API_KEY, OPENAI_API_KEY or OPENROUTER_API_KEY, OPENROUTER_API_KEY
 
-After all PDFs:
-3) Run mapping workflow (--apply) to stage FK-mapped outputs.
+Outputs:
+- Markdown, extraction JSON, and mapped outputs under output/
+- Logs to stdout/stderr
 
-Prereqs:
-- MISTRAL_API_KEY (for OCR)
-- OPENAI_API_KEY or OPENROUTER_API_KEY (for extraction)
-- OPENROUTER_API_KEY (for mapping LLM step)
-
-Usage:
-    python run_pipeline.py                                    # Process all PDFs in documents/
-    python run_pipeline.py --input documents/sample.pdf      # Process single PDF
-    python run_pipeline.py --no-vision                        # OCR only, no vision refinement
-    python run_pipeline.py --input documents/file.pdf --no-vision  # Single PDF, OCR only
+Usage (from project root):
+- python -m run_pipeline
 """
 
 from __future__ import annotations
 
 import argparse
+import logging
 import subprocess
 import sys
 from pathlib import Path
 from typing import Iterable, Optional
 
 from dotenv import load_dotenv
+
+from utils import setup_logger
+
+logger = logging.getLogger(__name__)
 
 
 def find_pdfs(documents_dir: Path) -> list[Path]:
@@ -59,10 +60,10 @@ def parse_args() -> argparse.Namespace:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  python run_pipeline.py                           # All PDFs with vision refinement
-  python run_pipeline.py --input documents/sample.pdf   # Single PDF with vision
-  python run_pipeline.py --no-vision               # All PDFs, OCR only
-  python run_pipeline.py --input documents/sample.pdf --no-vision  # Single PDF, OCR only
+  python -m run_pipeline                           # All PDFs with vision refinement
+  python -m run_pipeline --input documents/sample.pdf   # Single PDF with vision
+  python -m run_pipeline --no-vision               # All PDFs, OCR only
+  python -m run_pipeline --input documents/sample.pdf --no-vision  # Single PDF, OCR only
         """,
     )
     parser.add_argument(
@@ -100,23 +101,23 @@ def main() -> int:
     if args.input:
         # Single PDF specified
         if not args.input.exists():
-            print(f"Error: File not found: {args.input}")
+            logger.error("File not found: %s", args.input)
             return 1
         pdfs = [args.input]
-        print(f"Processing single file: {args.input.name}")
+        logger.info("Processing single file: %s", args.input.name)
     else:
         # All PDFs in documents/
         pdfs = find_pdfs(documents_dir)
         if not pdfs:
-            print("No PDFs found in documents/. Nothing to do.")
+            logger.info("No PDFs found in documents/. Nothing to do.")
             return 0
-        print(f"Processing {len(pdfs)} PDFs from documents/")
+        logger.info("Processing %d PDFs from documents/", len(pdfs))
 
     # Show processing info
     if args.no_vision:
-        print("Mode: OCR only (vision refinement DISABLED)")
+        logger.info("Mode: OCR only (vision refinement disabled)")
     else:
-        print("Mode: OCR + Vision refinement")
+        logger.info("Mode: OCR + vision refinement")
 
     # Create unified output structure
     output_root.mkdir(parents=True, exist_ok=True)
@@ -125,7 +126,7 @@ def main() -> int:
     mapping_work_dir.mkdir(parents=True, exist_ok=True)
 
     for pdf_path in pdfs:
-        print(f"\n[1/3] Converting PDF -> Markdown: {pdf_path.name}")
+        logger.info("[1/3] Converting PDF -> Markdown: %s", pdf_path.name)
         cmd = [
             sys.executable,
             "-m",
@@ -142,20 +143,24 @@ def main() -> int:
 
         code = run_cmd(cmd)
         if code != 0:
-            print(
-                f"Conversion failed for {pdf_path.name} (exit {code}); skipping extraction."
+            logger.error(
+                "Conversion failed for %s (exit %d); skipping extraction.",
+                pdf_path.name,
+                code,
             )
             continue
 
         markdown_path = find_latest_markdown(pdf_output_root, pdf_path.stem)
         if not markdown_path:
-            print(
-                f"Could not locate combined_markdown.md for {pdf_path.name}; skipping extraction."
+            logger.error(
+                "Could not locate combined_markdown.md for %s; skipping extraction.",
+                pdf_path.name,
             )
             continue
 
-        print(
-            f"[2/3] Extracting structured data from {markdown_path.relative_to(repo_root)}"
+        logger.info(
+            "[2/3] Extracting structured data from %s",
+            markdown_path.relative_to(repo_root),
         )
         code = run_cmd(
             [
@@ -169,11 +174,11 @@ def main() -> int:
             ]
         )
         if code != 0:
-            print(f"Extraction failed for {markdown_path} (exit {code}).")
+            logger.error("Extraction failed for %s (exit %d).", markdown_path, code)
 
     # Run mapping stage unless --no-mapping is set
     if not args.no_mapping:
-        print("\n[3/3] Running mapping workflow (--apply)...")
+        logger.info("[3/3] Running mapping workflow (--apply)...")
         map_code = run_cmd(
             [
                 sys.executable,
@@ -187,15 +192,16 @@ def main() -> int:
             ]
         )
         if map_code != 0:
-            print(f"Mapping workflow finished with exit {map_code}.")
+            logger.error("Mapping workflow finished with exit %d.", map_code)
             return map_code
     else:
-        print("\nMapping stage skipped (--no-mapping flag)")
+        logger.info("Mapping stage skipped (--no-mapping flag)")
 
-    print("\n✅ Pipeline completed!")
-    print(f"   Outputs in: {output_root.relative_to(repo_root)}/")
+    logger.info("Pipeline completed.")
+    logger.info("Outputs in: %s/", output_root.relative_to(repo_root))
     return 0
 
 
 if __name__ == "__main__":
+    setup_logger()
     raise SystemExit(main())

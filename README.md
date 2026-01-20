@@ -13,7 +13,7 @@ Production pipeline: **PDF → Markdown → Structured Data → Linked Records**
 ### Full Pipeline (Default)
 
 ```bash
-python run_pipeline.py
+python -m run_pipeline
 ```
 
 Processes all PDFs in `documents/` through all three stages. All output saved to `output/` folder.
@@ -23,44 +23,44 @@ Processes all PDFs in `documents/` through all three stages. All output saved to
 **Single PDF with vision refinement:**
 
 ```bash
-python run_pipeline.py --input documents/ccc_dresden.pdf
+python -m run_pipeline --input documents/ccc_dresden.pdf
 ```
 
 **OCR only (no vision refinement - faster):**
 
 ```bash
-python run_pipeline.py --no-vision
+python -m run_pipeline --no-vision
 ```
 
 **Single PDF + OCR only (fastest for testing):**
 
 ```bash
-python run_pipeline.py --input documents/ccc_dresden.pdf --no-vision
+python -m run_pipeline --input documents/ccc_dresden.pdf --no-vision
 ```
 
 **Skip mapping stage:**
 
 ```bash
-python run_pipeline.py --no-mapping
+python -m run_pipeline --no-mapping
 ```
 
 **Help:**
 
 ```bash
-python run_pipeline.py --help
+python -m run_pipeline --help
 ```
 
 ### Typical Workflow
 
 ```bash
 # 1. Test single file with OCR only (~10-15 min for 35MB)
-python run_pipeline.py --input documents/ccc_dresden.pdf --no-vision
+python -m run_pipeline --input documents/ccc_dresden.pdf --no-vision
 
 # 2. If OK, full pipeline with vision (~25-35 min)
-python run_pipeline.py --input documents/ccc_dresden.pdf
+python -m run_pipeline --input documents/ccc_dresden.pdf
 
 # 3. If working, process all PDFs
-python run_pipeline.py
+python -m run_pipeline
 ```
 
 ### Output Structure
@@ -94,6 +94,7 @@ Edit `llm_config.yml`:
 pdf2markdown:
   model: google/gemini-3-flash-preview
   temperature: 0.1
+  ocr_model: mistral-ocr-latest
 
 extraction:
   model: deepseek/deepseek-v3.2 # ⭐ Best for tool calling
@@ -112,16 +113,16 @@ mapping:
 
 ```bash
 # Single PDF with vision refinement
-python run_pipeline.py --input documents/sample.pdf
+python -m run_pipeline --input documents/sample.pdf
 
 # Single PDF without vision (faster)
-python run_pipeline.py --input documents/sample.pdf --no-vision
+python -m run_pipeline --input documents/sample.pdf --no-vision
 
 # All PDFs, OCR only
-python run_pipeline.py --no-vision
+python -m run_pipeline --no-vision
 
 # Single PDF without mapping
-python run_pipeline.py --input documents/sample.pdf --no-mapping
+python -m run_pipeline --input documents/sample.pdf --no-mapping
 ```
 
 ### Direct Module Usage
@@ -267,7 +268,7 @@ cat output/extraction/City.json
 ### Batch Processing
 
 ```bash
-python run_pipeline.py
+python -m run_pipeline
 # Results in: output/pdf2markdown/, output/extraction/, output/mapping/
 ```
 
@@ -379,4 +380,4 @@ Final Markdown ✓
 
 See `LICENSE.md`
 
-**Last Updated:** January 4, 2026
+**Last Updated:** January 16, 2026

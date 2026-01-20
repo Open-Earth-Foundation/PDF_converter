@@ -351,11 +351,28 @@ def _refine_page_group_with_vision(
             else:
                 break
         if response is None:  # pragma: no cover - defensive
-            raise VisionRefinementError(
-                f"Vision refinement failed for pages {page_label} with no response."
+            logger.warning(
+                "Vision refinement failed for pages %s with no response; using original markdown.",
+                page_label,
             )
+            return current_markdowns
 
-        assistant_message = response.choices[0].message
+        choices = getattr(response, "choices", None)
+        if not choices:
+            logger.warning(
+                "Vision refinement returned no choices for pages %s; using original markdown.",
+                page_label,
+            )
+            return current_markdowns
+
+        assistant_choice = choices[0] if choices else None
+        assistant_message = getattr(assistant_choice, "message", None)
+        if assistant_message is None:
+            logger.warning(
+                "Vision refinement returned empty message for pages %s; using original markdown.",
+                page_label,
+            )
+            return current_markdowns
 
         if not assistant_message.tool_calls:
             logger.warning(

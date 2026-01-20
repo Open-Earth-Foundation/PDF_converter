@@ -1,6 +1,23 @@
+"""
+Brief: Database migration helper for Alembic.
+
+Inputs:
+- CLI: upgrade/downgrade/revision commands
+- Env: DATABASE_URL
+- Files: alembic.ini, database/alembic/versions
+
+Outputs:
+- Creates revision files and applies migrations
+- Logs to stdout/stderr
+
+Usage (from project root):
+- python -m database.migrate upgrade head
+"""
+
 from __future__ import annotations
 
 import argparse
+import logging
 import os
 import re
 from datetime import datetime, timezone
@@ -10,9 +27,13 @@ from alembic import command
 from alembic.config import Config
 from dotenv import load_dotenv
 
+from utils import setup_logger
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 ALEMBIC_INI = REPO_ROOT / "alembic.ini"
 VERSIONS_DIR = Path(__file__).resolve().parent / "alembic" / "versions"
+
+LOGGER = logging.getLogger(__name__)
 
 
 def require_database_url() -> None:
@@ -138,14 +159,14 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def main() -> None:
+def main() -> int:
     load_dotenv()
     args = parse_args()
 
     if args.command == "revision":
         created = create_revision(message=args.message, revision_id=args.rev_id)
-        print(f"Created migration: {created}")
-        return
+        LOGGER.info("Created migration: %s", created)
+        return 0
 
     require_database_url()
     cfg = load_alembic_config()
@@ -153,26 +174,23 @@ def main() -> None:
     if args.command == "upgrade":
         try:
             command.upgrade(cfg, args.revision)
-            print(
-                f"\n[SUCCESS] Migration upgrade to '{args.revision}' completed successfully!"
-            )
+            LOGGER.info("Migration upgrade to '%s' completed successfully.", args.revision)
         except Exception as e:
-            print(f"\n[FAILED] Migration upgrade failed: {e}")
+            LOGGER.exception("Migration upgrade failed: %s", e)
             raise
-        return
+        return 0
     if args.command == "downgrade":
         try:
             command.downgrade(cfg, args.revision)
-            print(
-                f"\n[SUCCESS] Migration downgrade to '{args.revision}' completed successfully!"
-            )
+            LOGGER.info("Migration downgrade to '%s' completed successfully.", args.revision)
         except Exception as e:
-            print(f"\n[FAILED] Migration downgrade failed: {e}")
+            LOGGER.exception("Migration downgrade failed: %s", e)
             raise
-        return
+        return 0
 
     raise RuntimeError(f"Unknown command: {args.command}")
 
 
 if __name__ == "__main__":
-    main()
+    setup_logger()
+    raise SystemExit(main())

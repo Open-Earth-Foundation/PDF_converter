@@ -1,6 +1,7 @@
 pdf2markdown:
   model: google/gemini-3-flash-preview
   temperature: 0.1
+  ocr_model: mistral-ocr-latest
 
 extraction:
   model: openai/gpt-5-mini

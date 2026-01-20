@@ -1,16 +1,23 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "pdf-converter"
 version = "0.1.0"
-description = "Add your description here"
+description = "PDF converter pipeline"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "docling[vlm]==2.55.1",
-    "mistralai>=0.4.0",
-    "openai>=1.0.0",
-    "pypdf>=4.0.0",
-    "python-dotenv>=1.0.0",
-    "SQLAlchemy>=2.0",
-    "alembic>=1.13",
-    "psycopg[binary]>=3.1",
+    "mistralai==1.10.1",
+    "python-dotenv==1.2.1",
+    "pytest==9.0.2",
+    "pypdf==6.6.0",
+    "openai==2.15.0",
+    "PyYAML==6.0.3",
+    "tiktoken==0.12.0",
+    "SQLAlchemy==2.0.45",
+    "alembic==1.18.1",
+    "psycopg[binary]==3.3.2",
 ]

@@ -8,10 +8,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 from pathlib import Path
 from typing import Iterable
 
 DEFAULT_OUTPUT_DIR = Path(__file__).resolve().parents[2] / "extraction" / "output"
+
+LOGGER = logging.getLogger(__name__)
 
 # JSON filename -> fields to null out
 FK_FIELDS: dict[str, list[str]] = {
@@ -78,21 +81,21 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def main() -> None:
+def main() -> int:
     args = parse_args()
     output_dir: Path = args.output_dir
 
     results = [process_file(output_dir / fname, fields, args.apply) for fname, fields in FK_FIELDS.items()]
 
     for result in results:
-        print(
-            f"{result['file']}: {result['status']} "
-            f"(records={result['records']}, cleared={result['cleared']})"
+        LOGGER.info(
+            "%s: %s (records=%s, cleared=%s)",
+            result["file"],
+            result["status"],
+            result["records"],
+            result["cleared"],
         )
 
     if not args.apply:
-        print("\nDry run only. Re-run with --apply to write changes.")
-
-
-if __name__ == "__main__":
-    main()
+        LOGGER.info("Dry run only. Re-run with --apply to write changes.")
+    return 0
