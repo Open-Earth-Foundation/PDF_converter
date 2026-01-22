@@ -12,6 +12,8 @@ Structured output:
 
 from __future__ import annotations
 
+import threading
+
 from mapping.utils import LLMSelector, summarise_record
 
 PROMPT = (
@@ -27,24 +29,44 @@ def map_initiative_indicator(
     initiative_options: list[dict],
     indicator_options: list[dict],
     selector: LLMSelector,
+    batch_size: int = 15,
+    api_semaphore: threading.Semaphore | None = None,
 ) -> None:
-    """Populate initiativeId and indicatorId on InitiativeIndicator records."""
-    for record in records:
-        candidate_sets = [
-            {"field": "initiativeId", "options": initiative_options},
-            {"field": "indicatorId", "options": indicator_options},
+    """Populate initiativeId and indicatorId on InitiativeIndicator records with batch processing."""
+    candidate_sets = [
+        {"field": "initiativeId", "options": initiative_options},
+        {"field": "indicatorId", "options": indicator_options},
+    ]
+
+    # Process in batches (sequential within mapper, but throttled by semaphore)
+    for i in range(0, len(records), batch_size):
+        batch = records[i : i + batch_size]
+        batch_summaries = [
+            summarise_record(r, ["contributionType", "expectedChange", "notes"])
+            for r in batch
         ]
-        summary = summarise_record(record, ["contributionType", "expectedChange", "notes"])
-        selections = selector.select_fields(
-            record_label="InitiativeIndicator",
-            record=summary,
-            candidate_sets=candidate_sets,
-            prompt=PROMPT,
-            response_format=RESPONSE_FORMAT,
-        )
-        for field in ("initiativeId", "indicatorId"):
-            if field in selections:
-                record[field] = selections[field]
+
+        # Acquire semaphore before API call (if provided)
+        if api_semaphore:
+            api_semaphore.acquire()
+
+        try:
+            batch_selections = selector.select_fields_batch(
+                records=batch_summaries,
+                candidate_sets=candidate_sets,
+                prompt=PROMPT,
+                response_format=RESPONSE_FORMAT,
+                batch_label=f"InitiativeIndicator_batch_{i // batch_size}",
+            )
+
+            # Apply selections to batch
+            for record, selections in zip(batch, batch_selections):
+                for field in ("initiativeId", "indicatorId"):
+                    if field in selections:
+                        record[field] = selections[field]
+        finally:
+            if api_semaphore:
+                api_semaphore.release()  # Release semaphore after API call
 
 
 __all__ = ["map_initiative_indicator", "PROMPT", "RESPONSE_FORMAT"]

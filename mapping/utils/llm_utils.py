@@ -12,6 +12,8 @@ import logging
 from pathlib import Path
 from typing import Any, Iterable
 
+import tiktoken
+
 LOGGER = logging.getLogger(__name__)
 _CANONICAL_CITY_ID: str | None = None
 
@@ -22,10 +24,10 @@ UNMAPPED_RECORDS: dict[str, list[dict]] = {}
 def load_json_list(path: Path) -> list[dict]:
     """
     Load a JSON list from disk.
-    
+
     Missing files return [] (OK - entity types may not be present in all documents).
     A debug log is emitted for missing files.
-    
+
     Raises:
         ValueError: If the file exists but is corrupted/invalid JSON or doesn't contain a top-level list.
     """
@@ -38,8 +40,12 @@ def load_json_list(path: Path) -> list[dict]:
         LOGGER.error(f"JSON parsing failed for {path}: {exc}")
         raise ValueError(f"Invalid JSON in {path}: {exc}") from exc
     if not isinstance(payload, list):
-        LOGGER.error(f"Expected list at top-level of {path}, got {type(payload).__name__}")
-        raise ValueError(f"Expected top-level JSON list in {path}, got {type(payload).__name__}")
+        LOGGER.error(
+            f"Expected list at top-level of {path}, got {type(payload).__name__}"
+        )
+        raise ValueError(
+            f"Expected top-level JSON list in {path}, got {type(payload).__name__}"
+        )
     return payload
 
 
@@ -55,13 +61,16 @@ def set_canonical_city_id(city_id: str | None) -> None:
     _CANONICAL_CITY_ID = city_id
 
 
-def set_city_id(records: list[dict], fields: Iterable[str], city_id: str | None = None) -> int:
+def set_city_id(
+    records: list[dict], fields: Iterable[str], city_id: str | None = None
+) -> int:
     """
     Set canonical cityId across given fields; return count updated.
 
     If city_id is not provided, fallback to the global canonical id, and if that is missing,
     attempt to derive it from the first record that already has a cityId.
     """
+    global _CANONICAL_CITY_ID
     canonical = city_id or _CANONICAL_CITY_ID
     if canonical is None:
         for rec in records:
@@ -82,7 +91,9 @@ def set_city_id(records: list[dict], fields: Iterable[str], city_id: str | None 
     return updated
 
 
-def build_options(records: list[dict], id_key: str, label_keys: tuple[str, ...]) -> list[dict]:
+def build_options(
+    records: list[dict], id_key: str, label_keys: tuple[str, ...]
+) -> list[dict]:
     """Build selectable option list: [{id, label...}]."""
     options: list[dict] = []
     for record in records:
@@ -160,6 +171,24 @@ class LLMSelector:
             "Do not include any text outside the JSON object. Use null when no option fits."
         )
 
+        # Calculate and log prompt size
+        enc = tiktoken.get_encoding("cl100k_base")
+        system_tokens = len(
+            enc.encode(
+                "You are a careful data mapper. Only select IDs from the provided options or null. Respond ONLY with JSON matching the requested schema."
+            )
+        )
+        user_tokens = len(enc.encode(user_content))
+        total_tokens = system_tokens + user_tokens
+
+        LOGGER.debug(
+            "Mapping prompt for %s: system=%d tokens, user=%d tokens, total=%d tokens",
+            record_label,
+            system_tokens,
+            user_tokens,
+            total_tokens,
+        )
+
         resp = self.client.chat.completions.create(
             model=self.model,
             messages=[
@@ -171,7 +200,9 @@ class LLMSelector:
                 {"role": "user", "content": user_content},
             ],
             response_format=response_format or {"type": "json_object"},
-            temperature=self.default_temperature if temperature is None else temperature,
+            temperature=(
+                self.default_temperature if temperature is None else temperature
+            ),
         )
 
         try:
@@ -186,3 +217,127 @@ class LLMSelector:
             selections[field] = entry.get("id")
 
         return selections
+
+    def select_fields_batch(
+        self,
+        *,
+        records: list[dict],
+        candidate_sets: list[dict],
+        prompt: str,
+        response_format: dict | None = None,
+        temperature: float | None = None,
+        batch_label: str = "Batch",
+    ) -> list[dict[str, Any]]:
+        """
+        Process multiple records in a single LLM call.
+
+        Args:
+            records: List of record dictionaries to process
+            candidate_sets: List of candidate field/options dicts
+            prompt: Prompt to use for the LLM
+            response_format: Response format override
+            temperature: Temperature override
+            batch_label: Label for logging
+
+        Returns:
+            List of selection dicts, one per input record.
+            Each dict maps field names to selected IDs (or None).
+        """
+        if not records:
+            return []
+
+        # Check if any candidate set has options
+        has_options = any(cs.get("options") for cs in candidate_sets)
+        if not has_options:
+            # All fields empty, return None for all
+            return [{cs["field"]: None for cs in candidate_sets} for _ in records]
+
+        # Build batch prompt with all records
+        options_text = json.dumps(candidate_sets, indent=2, ensure_ascii=False)
+        records_text = json.dumps(records, indent=2, ensure_ascii=False)
+        structure_hint = '{"batch_results":[{"record_index":0,"selections":[{"field":"fieldName","id":"<uuid or null>","reason":"short justification"}]}]}'
+        user_content = (
+            f"{prompt}\n\n"
+            f"Process the following {len(records)} records:\n{records_text}\n\n"
+            f"Options by field:\n{options_text}\n\n"
+            f"Return a JSON object exactly like: {structure_hint}. "
+            "Include one entry per record, indexed 0 to {}, each with selections array. "
+            "Do not include any text outside the JSON object. Use null when no option fits.".format(
+                len(records) - 1
+            )
+        )
+
+        # Calculate and log prompt size
+        enc = tiktoken.get_encoding("cl100k_base")
+        system_tokens = len(
+            enc.encode(
+                "You are a careful data mapper. Only select IDs from the provided options or null. Respond ONLY with JSON matching the requested schema."
+            )
+        )
+        user_tokens = len(enc.encode(user_content))
+        total_tokens = system_tokens + user_tokens
+
+        LOGGER.debug(
+            "Batch mapping prompt for %s: %d records, system=%d tokens, user=%d tokens, total=%d tokens",
+            batch_label,
+            len(records),
+            system_tokens,
+            user_tokens,
+            total_tokens,
+        )
+
+        # Make API call
+        resp = self.client.chat.completions.create(
+            model=self.model,
+            messages=[
+                {
+                    "role": "system",
+                    "content": "You are a careful data mapper. Only select IDs from the provided options or null. "
+                    "Respond ONLY with JSON matching the requested schema.",
+                },
+                {"role": "user", "content": user_content},
+            ],
+            response_format=response_format or {"type": "json_object"},
+            temperature=(
+                self.default_temperature if temperature is None else temperature
+            ),
+        )
+
+        # Parse batch results
+        try:
+            payload = json.loads(resp.choices[0].message.content or "{}")
+        except Exception as exc:
+            LOGGER.error("Failed to parse batch response for %s: %s", batch_label, exc)
+            payload = {}
+
+        # Initialize results: one entry per record with all fields mapped to None
+        batch_results: list[dict[str, Any]] = [
+            {cs["field"]: None for cs in candidate_sets} for _ in records
+        ]
+
+        # Populate results from LLM response
+        for result_entry in payload.get("batch_results", []):
+            record_idx = result_entry.get("record_index")
+            if record_idx is None or not isinstance(record_idx, int):
+                continue
+            if record_idx < 0 or record_idx >= len(records):
+                LOGGER.warning(
+                    "Batch result index out of range for %s: %d (valid: 0-%d)",
+                    batch_label,
+                    record_idx,
+                    len(records) - 1,
+                )
+                continue
+
+            for selection in result_entry.get("selections", []):
+                field = selection.get("field")
+                if not field:
+                    continue
+                batch_results[record_idx][field] = selection.get("id")
+
+        LOGGER.debug(
+            "Batch mapping complete for %s: %d records processed",
+            batch_label,
+            len(records),
+        )
+        return batch_results

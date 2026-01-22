@@ -15,7 +15,16 @@ DEFAULT_LLM_CONFIG: Dict[str, Dict[str, Any]] = {
         "temperature": 0.0,
         "ocr_model": "mistral-ocr-latest",
     },
-    "extraction": {"model": "google/gemini-3-flash-preview", "temperature": 0.0},
+    "extraction": {
+        "model": "google/gemini-3-flash-preview",
+        "temperature": 0.0,
+        "token_limit": 900000,
+        "max_rounds": 12,
+        "debug_logs_enabled": True,
+        "clean_debug_logs_on_start": True,
+        "debug_logs_full_response_once": True,
+        "debug_logs_full_response": False,
+    },
     "mapping": {"model": "google/gemini-3-flash-preview", "temperature": 0.0},
 }
 

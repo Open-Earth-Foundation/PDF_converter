@@ -38,6 +38,9 @@ FIELD_TYPE_MAP: dict[str, dict[str, Type]] = {
         "totalEstimatedCost": int,
         "status": str,
     },
+    "InitiativeIndicator": {
+        "expectedChange": Decimal,
+    },
 }
 
 
@@ -79,28 +82,28 @@ def _normalize_decimal_string(raw: str) -> str:
 def coerce_verified_value(value: Any, field_name: str, target_type: Type) -> Any:
     """
     Coerce a verified field value to its target database type.
-    
+
     For verified fields, the LLM provides string values (or None).
     This function converts them to the correct types for database storage.
-    
+
     Args:
         value: The value from VerifiedField.value (typically str or None)
         field_name: The field name (for error messages)
         target_type: The target database type (date, Decimal, int, str)
-        
+
     Returns:
         The coerced value in the correct type, or None if value is None
-        
+
     Raises:
         ValueError: If coercion fails
     """
     if value is None:
         return None
-    
+
     # Already correct type
     if isinstance(value, target_type):
         return value
-    
+
     try:
         if target_type is Decimal:
             # Convert to Decimal, then return JSON-safe string form
@@ -112,7 +115,7 @@ def coerce_verified_value(value: Any, field_name: str, target_type: Type) -> Any
             else:
                 raise ValueError(f"Cannot coerce {type(value)} to Decimal")
             return str(decimal_value)
-                
+
         elif target_type is int:
             # Year fields normalize to a 4-digit year
             if field_name == "year" or field_name.endswith("Year"):
@@ -132,15 +135,15 @@ def coerce_verified_value(value: Any, field_name: str, target_type: Type) -> Any
             if isinstance(value, float):
                 return int(value)
             return int(value)
-                
+
         elif target_type is str:
             # Ensure string
             return str(value)
-            
+
         else:
             # Unknown type, try direct conversion
             return target_type(value)
-            
+
     except (ValueError, TypeError, InvalidOperation) as e:
         raise ValueError(
             f"Failed to coerce field '{field_name}' value '{value}' to {target_type.__name__}: {e}"

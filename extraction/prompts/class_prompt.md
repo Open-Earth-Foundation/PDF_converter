@@ -24,11 +24,10 @@ Previously extracted {class_name} instances (avoid duplicates):
 
 1. Scan the entire Markdown for all mentions matching {class_name} (tables, lists, paragraphs, inline mentions).
 2. For each instance: populate an object using the exact schema aliases as JSON keys.
-3. **For VerifiedField objects** (fields with `value`, `quote`, `confidence`):
-   - Extract the value from the source
-   - Provide a verbatim quote from the document that supports the value
-   - Assign a confidence score (0.0-1.0) based on clarity
-   - Example: `"targetYear": {{"value": "2030", "quote": "by 2030", "confidence": 0.95}}`
+3. **For verified fields** (fields with accompanying `_quote` and `_confidence` fields):
+   - Set the main field to the extracted value (e.g., `"targetYear": "2030"`)
+   - Set the `_quote` field with a verbatim quote from the document (e.g., `"targetYear_quote": "by 2030"`)
+   - Set the `_confidence` field with a score 0.0-1.0 (e.g., `"targetYear_confidence": 0.95`)
 4. Call `record_instances` with the `items` array containing all extracted objects.
    - Example: `record_instances({{"items": [...], "source_notes": "Found X instances"}})`
 5. If you find zero instances, call `record_instances` with an empty items array OR call `all_extracted` with a reason.
@@ -36,48 +35,42 @@ Previously extracted {class_name} instances (avoid duplicates):
 
 **IMPORTANT**: Every response must contain tool calls. No plain text responses.
 
-**VerifiedField Examples**:
+**Verified Field Examples**:
 
-For a target year field in the schema (quote MUST be verbatim from source):
+For a target year field (quote MUST be verbatim from source):
 ```json
 {{
-  "targetYear": {{
-    "value": "2030",
-    "quote": "by 2030",
-    "confidence": 0.95
-  }}
+  "targetYear": "2030",
+  "targetYear_quote": "by 2030",
+  "targetYear_confidence": 0.95
 }}
 ```
 
 For an amount field (quote MUST be verbatim from source):
 ```json
 {{
-  "totalAmount": {{
-    "value": "5000000",
-    "quote": "5 million euros",
-    "confidence": 0.9
-  }}
+  "totalAmount": "5000000",
+  "totalAmount_quote": "5 million euros",
+  "totalAmount_confidence": 0.9
 }}
 ```
 
-For a field not found in source (ONLY use null if you can find explicit absence text in document):
+For an optional field not found in source (ONLY if document explicitly states absence):
 ```json
 {{
-  "status": {{
-    "value": null,
-    "quote": "status not mentioned",
-    "confidence": 0.85
-  }}
+  "status": null,
+  "status_quote": "status not mentioned",
+  "status_confidence": 0.85
 }}
 ```
-⚠️ **ONLY VALID IF** "status not mentioned" or similar text appears verbatim in the source document. Otherwise, OMIT this field entirely.
+⚠️ **ONLY VALID IF** "status not mentioned" or similar text appears verbatim in the source document. Otherwise, OMIT all three fields (status, status_quote, status_confidence) entirely.
 
 **CRITICAL: null Values with Quotes**:
-- Use `value: null` ONLY when the document explicitly states the absence (e.g., "not specified", "not available", "N/A")
+- Use `null` value ONLY when the document explicitly states the absence (e.g., "not specified", "not available", "N/A")
 - The quote MUST be found verbatim in the source document
-- If the document is silent (just doesn't mention the field), do NOT create a null entry—omit the field instead
-- Example valid: `"quote": "baseline not specified"` (if this exact text is in source)
-- Example invalid: `"quote": "no baseline information found"` (if this exact text is NOT in source)
+- If the document is silent (just doesn't mention the field), OMIT all three related fields (value, _quote, _confidence)
+- Example valid: `"baselineYear_quote": "baseline not specified"` (if this exact text is in source)
+- Example invalid: `"baselineYear_quote": "no baseline information found"` (if this exact text is NOT in source)
 
 **CRITICAL**: All quotes MUST be verbatim text from the source document. Paraphrased or inferred quotes will cause record rejection.
 

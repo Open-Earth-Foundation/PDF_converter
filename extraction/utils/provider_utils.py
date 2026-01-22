@@ -10,7 +10,7 @@ def select_provider(llm_cfg: dict[str, Any], config: dict[str, Any], env_prefix:
     """
     Choose a provider hint in priority order:
     1) llm_config.yml extraction.provider
-    2) extraction/config.yaml provider
+    2) llm_config.yml extraction.provider
     3) environment override (EXTRACTION_PROVIDER or custom prefix)
     4) OPENROUTER_PROVIDER (router-wide override)
     """

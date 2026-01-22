@@ -70,26 +70,57 @@ def run_class_extraction(
     Run extraction for a single Pydantic model class using chat.completions with tools.
 
     Args mirror the CLI entry point.
-    
+
     Args:
         db_model_name: The database model name (for output file naming and context loading).
                        Used when extraction uses a different schema (e.g., VerifiedCityTarget).
     """
     output_path = output_dir / f"{db_model_name}.json"
     stored_instances = load_existing(output_path)
-    seen_hashes = {json.dumps(entry, sort_keys=True, ensure_ascii=False) for entry in stored_instances}
+    seen_hashes = {
+        json.dumps(entry, sort_keys=True, ensure_ascii=False)
+        for entry in stored_instances
+    }
     base_extra_body = dict(extra_body or {})
 
     class_context = escape_braces(load_class_context(db_model_name))
+
+    # Generate compact JSON schema: only include properties and required fields
+    # This avoids sending large definitions and examples that bloat the context
+    full_schema = model_cls.model_json_schema(by_alias=True)
+    compact_schema = {
+        "title": full_schema.get("title"),
+        "type": "object",
+        "properties": full_schema.get("properties", {}),
+        "required": full_schema.get("required", []),
+    }
+
     user_prompt = user_template.format(
         class_name=model_cls.__name__,
         class_context=class_context,
-        json_schema=escape_braces(json.dumps(model_cls.model_json_schema(by_alias=True), indent=2)),
+        json_schema=escape_braces(json.dumps(compact_schema, indent=2)),
         existing_summary=escape_braces(summarise_instances(stored_instances)),
         markdown=escape_braces(markdown_text),
     )
 
-    LOGGER.info("Starting extraction for %s (existing %d records).", db_model_name, len(stored_instances))
+    # Calculate and log prompt size
+    enc = tiktoken.get_encoding("cl100k_base")
+    system_tokens = len(enc.encode(system_prompt))
+    user_tokens = len(enc.encode(user_prompt))
+    total_prompt_tokens = system_tokens + user_tokens
+
+    LOGGER.info(
+        "Starting extraction for %s (existing %d records).",
+        db_model_name,
+        len(stored_instances),
+    )
+    LOGGER.debug(
+        "Prompt composition for %s: system=%d tokens, user=%d tokens, total=%d tokens",
+        db_model_name,
+        system_tokens,
+        user_tokens,
+        total_prompt_tokens,
+    )
     messages: list[dict] = [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_prompt},
@@ -112,13 +143,19 @@ def run_class_extraction(
 
             if is_404 and (supports_tool_msg or tool_choice_msg):
                 fallback_body = apply_default_provider(model_name, base_extra_body)
-                added_provider = fallback_body.get("provider") != (base_extra_body.get("provider") if base_extra_body else None)
+                added_provider = fallback_body.get("provider") != (
+                    base_extra_body.get("provider") if base_extra_body else None
+                )
                 fallback_choice = "auto" if tool_choice_msg else "required"
                 LOGGER.warning(
                     "Received 404 for tool use on %s; retrying with tool_choice='%s'%s.",
                     model_name,
                     fallback_choice,
-                    f" and provider={fallback_body.get('provider')}" if added_provider else "",
+                    (
+                        f" and provider={fallback_body.get('provider')}"
+                        if added_provider
+                        else ""
+                    ),
                 )
                 response = client.chat.completions.create(
                     model=model_name,
@@ -144,7 +181,9 @@ def run_class_extraction(
         choice = response.choices[0].message
         tool_calls = choice.tool_calls or []
         if not tool_calls:
-            preview_text = truncate(choice.content or "", 160) if choice.content else "(no text)"
+            preview_text = (
+                truncate(choice.content or "", 160) if choice.content else "(no text)"
+            )
             LOGGER.warning(
                 "No tool calls returned for %s (round %d). Assistant said: %s",
                 model_cls.__name__,
@@ -178,10 +217,18 @@ def run_class_extraction(
         for tc in tool_calls:
             name = tc.function.name
             args = tc.function.arguments or "{}"
-            fake_call = type("ToolCall", (), {"name": name, "arguments": args, "call_id": tc.id})
+            fake_call = type(
+                "ToolCall", (), {"name": name, "arguments": args, "call_id": tc.id}
+            )
 
             if name == "record_instances":
-                payload, added = parse_record_instances(fake_call, model_cls, seen_hashes, stored_instances, source_text=markdown_text)
+                payload, added = parse_record_instances(
+                    fake_call,
+                    model_cls,
+                    seen_hashes,
+                    stored_instances,
+                    source_text=markdown_text,
+                )
                 if added:
                     persist_instances(output_path, stored_instances)
                     LOGGER.info(
@@ -195,7 +242,11 @@ def run_class_extraction(
                     reason = json.loads(args or "{}").get("reason", "completed")
                 except json.JSONDecodeError:
                     reason = "completed"
-                payload = {"status": "done", "stored": len(stored_instances), "reason": reason}
+                payload = {
+                    "status": "done",
+                    "stored": len(stored_instances),
+                    "reason": reason,
+                }
             else:
                 payload = {"status": "error", "message": f"Unknown tool {name}"}
 
@@ -209,7 +260,9 @@ def run_class_extraction(
             )
 
         if not tool_messages:
-            LOGGER.warning("No tool outputs generated for %s; aborting loop.", model_cls.__name__)
+            LOGGER.warning(
+                "No tool outputs generated for %s; aborting loop.", model_cls.__name__
+            )
             break
 
         messages.extend(tool_messages)
@@ -218,15 +271,24 @@ def run_class_extraction(
             LOGGER.info("Model signalled completion for %s.", model_cls.__name__)
             break
     else:
-        LOGGER.warning("Reached max rounds (%d) for %s.", max_rounds, model_cls.__name__)
+        LOGGER.warning(
+            "Reached max rounds (%d) for %s.", max_rounds, model_cls.__name__
+        )
 
     persist_instances(output_path, stored_instances)
 
 
 def parse_args() -> argparse.Namespace:
     """Parse command-line arguments."""
-    parser = argparse.ArgumentParser(description="Extract Pydantic model instances from Markdown using OpenAI agents.")
-    parser.add_argument("--markdown", required=True, type=Path, help="Path to the Markdown file to parse.")
+    parser = argparse.ArgumentParser(
+        description="Extract Pydantic model instances from Markdown using OpenAI agents."
+    )
+    parser.add_argument(
+        "--markdown",
+        required=True,
+        type=Path,
+        help="Path to the Markdown file to parse.",
+    )
     parser.add_argument(
         "--output-dir",
         type=Path,
@@ -236,13 +298,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--model",
         default=None,
-        help="OpenAI model to use for extraction (overrides config.yaml if set).",
+        help="OpenAI model to use for extraction (overrides llm_config.yml extraction.model if set).",
     )
     parser.add_argument(
         "--max-rounds",
         type=int,
         default=None,
-        help="Maximum tool-calling rounds per class before stopping (overrides config.yaml if set).",
+        help="Maximum tool-calling rounds per class before stopping (overrides llm_config.yml if set).",
     )
     parser.add_argument(
         "--timeout",
@@ -279,32 +341,36 @@ def main() -> None:
 
     config = load_config()
     llm_cfg = load_llm_config().get("extraction", {})
-    
+
     # Clean debug logs at startup if configured
     clean_logs_on_start = config.get("clean_debug_logs_on_start", True)
     if clean_logs_on_start:
         clean_debug_logs()
-    
+
     model_name = args.model or llm_cfg.get("model") or config.get("model")
     if not model_name:
-        raise RuntimeError("Model must be specified in llm_config.yml, config.yaml, or via --model CLI argument.")
+        raise RuntimeError(
+            "Model must be specified in llm_config.yml (extraction.model) or via --model CLI argument."
+        )
 
     # Optional provider override (useful for OpenRouter when only specific providers support tools)
     provider = select_provider(llm_cfg, config, env_prefix="EXTRACTION")
     if provider and not isinstance(provider, dict):
-        LOGGER.warning("Ignoring provider override because it must be a mapping; got %r", provider)
+        LOGGER.warning(
+            "Ignoring provider override because it must be a mapping; got %r", provider
+        )
         provider = None
     extra_body = {"provider": provider} if provider else None
-    
+
     # Get token limit from config
     token_limit = config.get("token_limit", 900000)
-    
+
     # Get max rounds from config or CLI override
     max_rounds = args.max_rounds or config.get("max_rounds", 12)
-    
+
     # Output directory (CLI override)
     output_dir = args.output_dir or Path(__file__).resolve().parent / "output"
-    
+
     provider_label = provider or "auto (router)"
     LOGGER.info(
         "Using model: %s (token_limit: %d, max_rounds: %d, provider: %s)",
@@ -313,11 +379,14 @@ def main() -> None:
         max_rounds,
         provider_label,
     )
-    
+
     # Check for stray environment variables
     vision_model_env = os.getenv("VISION_MODEL")
     if vision_model_env:
-        LOGGER.warning("VISION_MODEL environment variable is set to: %s (but not being used)", vision_model_env)
+        LOGGER.warning(
+            "VISION_MODEL environment variable is set to: %s (but not being used)",
+            vision_model_env,
+        )
 
     markdown_text = load_markdown(args.markdown)
 
@@ -327,7 +396,7 @@ def main() -> None:
     if token_count > token_limit:
         LOGGER.error("File too large: %d tokens (limit: %d)", token_count, token_limit)
         return
-    
+
     LOGGER.info("File size OK: %d tokens (limit: %d)", token_count, token_limit)
 
     system_prompt = load_prompt("system.md")
@@ -351,7 +420,9 @@ def main() -> None:
         model_classes = [cls for cls in model_classes if cls.__name__ in wanted]
         missing = wanted - {cls.__name__ for cls in model_classes}
         if missing:
-            LOGGER.warning("Requested class names not found: %s", ", ".join(sorted(missing)))
+            LOGGER.warning(
+                "Requested class names not found: %s", ", ".join(sorted(missing))
+            )
 
     if not model_classes:
         LOGGER.warning("No classes to process.")
@@ -360,7 +431,14 @@ def main() -> None:
     # Map database schema classes to verified schema classes for extraction
     verified_module = importlib.import_module("extraction.schemas_verified")
     verified_classes_map = {}
-    for cls_name in ["CityTarget", "EmissionRecord", "CityBudget", "IndicatorValue", "BudgetFunding", "Initiative"]:
+    for cls_name in [
+        "CityTarget",
+        "EmissionRecord",
+        "CityBudget",
+        "IndicatorValue",
+        "BudgetFunding",
+        "Initiative",
+    ]:
         verified_cls_name = f"Verified{cls_name}"
         try:
             verified_cls = getattr(verified_module, verified_cls_name)
@@ -369,6 +447,13 @@ def main() -> None:
             pass
 
     for model_cls in model_classes:
+        # Special handling: skip standalone IndicatorValue extraction if using combined extraction
+        if model_cls.__name__ == "IndicatorValue":
+            LOGGER.info(
+                "Skipping standalone IndicatorValue extraction (use IndicatorWithValues for combined extraction)"
+            )
+            continue
+
         # Use verified schema for extraction if available, otherwise use database schema
         extraction_model_cls = verified_classes_map.get(model_cls.__name__, model_cls)
         if extraction_model_cls != model_cls:
@@ -389,6 +474,28 @@ def main() -> None:
             output_dir=output_dir,
             max_rounds=max_rounds,
             config=config,
+        )
+
+    # Extract combined Indicator + IndicatorValues
+    try:
+        indicator_with_values_cls = getattr(verified_module, "IndicatorWithValues")
+        LOGGER.info("Extracting combined IndicatorWithValues...")
+        run_class_extraction(
+            client=client,
+            model_name=model_name,
+            extra_body=extra_body,
+            system_prompt=system_prompt,
+            user_template=user_template,
+            markdown_text=markdown_text,
+            model_cls=indicator_with_values_cls,
+            db_model_name="IndicatorWithValues",
+            output_dir=output_dir,
+            max_rounds=max_rounds,
+            config=config,
+        )
+    except AttributeError:
+        LOGGER.debug(
+            "IndicatorWithValues schema not available, skipping combined extraction"
         )
 
 

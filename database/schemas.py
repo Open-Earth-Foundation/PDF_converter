@@ -16,17 +16,23 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class BaseDBModel(BaseModel):
-    model_config = ConfigDict(populate_by_name=True, validate_assignment=True, extra="forbid")
+    model_config = ConfigDict(
+        populate_by_name=True, validate_assignment=True, extra="forbid"
+    )
     misc: Dict[str, Any] | None = Field(default=None, alias="misc")
 
 
 class ClimateCityContract(BaseDBModel):
-    climate_city_contract_id: UUID | None = Field(alias="climateCityContractId", default=None)
+    climate_city_contract_id: UUID | None = Field(
+        alias="climateCityContractId", default=None
+    )
     city_id: UUID | None = Field(alias="cityId", default=None)
     contract_date: datetime = Field(alias="contractDate")
     title: str = Field(alias="title")
     version: str | None = Field(default=None, alias="version")
-    language: str | None = Field(default=None, alias="language")  # TODO: enum when vocabulary set
+    language: str | None = Field(
+        default=None, alias="language"
+    )  # TODO: enum when vocabulary set
     document_url: str | None = Field(default=None, alias="documentUrl")
     notes: str | None = Field(default=None, alias="notes")
 
@@ -83,8 +89,8 @@ class FundingSource(BaseDBModel):
     funding_source_id: UUID = Field(alias="fundingSourceId")
     name: str = Field(alias="name")
     type: str = Field(alias="type")
-    description: str | None = Field(default=None, alias="description")
-    notes: str | None = Field(default=None, alias="notes")
+    description: str = Field(alias="description")
+    notes: str = Field(alias="notes")
 
 
 class BudgetFunding(BaseDBModel):
@@ -100,12 +106,16 @@ class Initiative(BaseDBModel):
     initiative_id: UUID | None = Field(alias="initiativeId", default=None)
     city_id: UUID | None = Field(alias="cityId", default=None)
     title: str = Field(alias="title")
-    description: str | None = Field(default=None, alias="description")
+    description: str = Field(alias="description")
     start_year: int | None = Field(default=None, alias="startYear")
     end_year: int | None = Field(default=None, alias="endYear")
     total_estimated_cost: int | None = Field(default=None, alias="totalEstimatedCost")
-    currency: str | None = Field(default=None, alias="currency")  # TODO: enum when vocabulary set
-    status: str | None = Field(default=None, alias="status")  # TODO: enum when vocabulary set
+    currency: str | None = Field(
+        default=None, alias="currency"
+    )  # TODO: enum when vocabulary set
+    status: str | None = Field(
+        default=None, alias="status"
+    )  # TODO: enum when vocabulary set
     notes: str | None = Field(default=None, alias="notes")
 
 
@@ -113,15 +123,19 @@ class Stakeholder(BaseDBModel):
     stakeholder_id: UUID = Field(alias="stakeholderId")
     name: str = Field(alias="name")
     type: str | None = Field(default=None, alias="type")
-    description: str | None = Field(default=None, alias="description")
+    description: str = Field(alias="description")
     notes: str | None = Field(default=None, alias="notes")
 
 
 class InitiativeStakeholder(BaseDBModel):
-    initiative_stakeholder_id: UUID | None = Field(alias="initiativeStakeholderId", default=None)
+    initiative_stakeholder_id: UUID | None = Field(
+        alias="initiativeStakeholderId", default=None
+    )
     initiative_id: UUID | None = Field(alias="initiativeId", default=None)
     stakeholder_id: UUID | None = Field(alias="stakeholderId", default=None)
-    role: str | None = Field(default=None, alias="role")  # TODO: enum when vocabulary set
+    role: str | None = Field(
+        default=None, alias="role"
+    )  # TODO: enum when vocabulary set
     notes: str | None = Field(default=None, alias="notes")
 
 
@@ -130,7 +144,7 @@ class Indicator(BaseDBModel):
     city_id: UUID | None = Field(alias="cityId", default=None)
     sector_id: UUID | None = Field(default=None, alias="sectorId")
     name: str = Field(alias="name")
-    description: str | None = Field(default=None, alias="description")
+    description: str = Field(alias="description")
     unit: str = Field(alias="unit")  # TODO: enum when vocabulary set
     notes: str | None = Field(default=None, alias="notes")
 
@@ -158,10 +172,14 @@ class CityTarget(BaseDBModel):
 
 
 class InitiativeIndicator(BaseDBModel):
-    initiative_indicator_id: UUID | None = Field(alias="initiativeIndicatorId", default=None)
+    initiative_indicator_id: UUID | None = Field(
+        alias="initiativeIndicatorId", default=None
+    )
     initiative_id: UUID | None = Field(alias="initiativeId", default=None)
     indicator_id: UUID | None = Field(alias="indicatorId", default=None)
-    contribution_type: str = Field(alias="contributionType")  # TODO: enum when vocabulary set
+    contribution_type: str = Field(
+        alias="contributionType"
+    )  # TODO: enum when vocabulary set
     expected_change: Decimal | None = Field(default=None, alias="expectedChange")
     notes: str | None = Field(default=None, alias="notes")
 

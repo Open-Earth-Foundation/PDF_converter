@@ -20,6 +20,29 @@ LOGGER = logging.getLogger(__name__)
 
 IGNORE_CLASS_NAMES = {"PossiblyTEF"}
 
+PLACEHOLDER_UUID_PREFIX = "00000000-0000-0000-0000-"
+ID_EXCLUDE_FIELDS = {"misc", "notes"}
+
+PRIMARY_KEY_FIELDS: dict[str, str] = {
+    "BudgetFunding": "budgetFundingId",
+    "City": "cityId",
+    "CityAnnualStats": "statId",
+    "CityBudget": "budgetId",
+    "CityTarget": "cityTargetId",
+    "ClimateCityContract": "climateCityContractId",
+    "EmissionRecord": "emissionRecordId",
+    "FundingSource": "fundingSourceId",
+    "Indicator": "indicatorId",
+    "IndicatorValue": "indicatorValueId",
+    "Initiative": "initiativeId",
+    "InitiativeIndicator": "initiativeIndicatorId",
+    "InitiativeStakeholder": "initiativeStakeholderId",
+    "InitiativeTef": "initiativeTefId",
+    "Sector": "sectorId",
+    "Stakeholder": "stakeholderId",
+    "TefCategory": "tefId",
+}
+
 
 def escape_braces(text: str) -> str:
     """Escape braces in text for template formatting."""
@@ -36,13 +59,101 @@ def contains_uuid_type(annotation: object) -> bool:
     return any(contains_uuid_type(arg) for arg in get_args(annotation))
 
 
+def is_valid_uuid(value: object) -> bool:
+    """Return True for well-formed UUID strings."""
+    if not isinstance(value, str):
+        return False
+    try:
+        UUID(value)
+    except ValueError:
+        return False
+    return True
+
+
+def is_placeholder_uuid(value: object) -> bool:
+    """Treat zero-prefixed UUIDs as placeholders that should be replaced."""
+    if not isinstance(value, str):
+        return False
+    return value.strip().lower().startswith(PLACEHOLDER_UUID_PREFIX)
+
+
+def get_primary_key_alias(model_name: str, model_cls: Type[BaseModel]) -> str | None:
+    """Resolve the primary key alias for a model."""
+    if model_name in PRIMARY_KEY_FIELDS:
+        return PRIMARY_KEY_FIELDS[model_name]
+    candidates: list[str] = []
+    for name, field in model_cls.model_fields.items():
+        alias = field.alias or name
+        if contains_uuid_type(field.annotation) and alias.endswith("Id"):
+            candidates.append(alias)
+    if len(candidates) == 1:
+        return candidates[0]
+    return None
+
+
+def _build_id_seed(record: dict, pk_alias: str) -> str:
+    """Build a deterministic seed for UUID generation."""
+    payload = {
+        key: value
+        for key, value in record.items()
+        if key not in ID_EXCLUDE_FIELDS and key != pk_alias
+    }
+    return json.dumps(payload, sort_keys=True, ensure_ascii=False)
+
+
+def deterministic_uuid_for_record(
+    record: dict, model_name: str, pk_alias: str, salt: str | None = None
+) -> str:
+    """Generate a deterministic UUID for a record using a stable seed."""
+    seed = _build_id_seed(record, pk_alias)
+    if salt:
+        seed = f"{seed}|{salt}"
+    namespace = uuid5(UUID(int=0), model_name)
+    return str(uuid5(namespace, seed + pk_alias))
+
+
+def ensure_primary_key(
+    record: dict,
+    model_name: str,
+    model_cls: Type[BaseModel],
+    existing_ids: Set[str],
+) -> dict:
+    """Ensure a deterministic primary key exists and is unique within existing_ids."""
+    pk_alias = get_primary_key_alias(model_name, model_cls)
+    if not pk_alias:
+        return record
+
+    raw_value = record.get(pk_alias)
+    needs_new = (
+        raw_value is None
+        or not is_valid_uuid(raw_value)
+        or is_placeholder_uuid(raw_value)
+        or raw_value in existing_ids
+    )
+    if not needs_new:
+        return record
+
+    new_id = deterministic_uuid_for_record(record, model_name, pk_alias)
+    counter = 1
+    while new_id in existing_ids:
+        counter += 1
+        new_id = deterministic_uuid_for_record(
+            record, model_name, pk_alias, salt=str(counter)
+        )
+    record[pk_alias] = new_id
+    return record
+
+
 def auto_fill_missing_ids(raw: dict, model_cls: Type[BaseModel]) -> dict:
     """Fill missing UUID fields with deterministic placeholders for validation."""
     filled = dict(raw)
     for name, field in model_cls.model_fields.items():
         alias = field.alias or name
         if alias in filled and filled[alias]:
-            continue
+            if not contains_uuid_type(field.annotation):
+                continue
+            if is_valid_uuid(filled[alias]) and not is_placeholder_uuid(filled[alias]):
+                continue
         if contains_uuid_type(field.annotation):
             placeholder = str(
                 uuid5(
@@ -115,7 +226,7 @@ def normalize_extracted_item(raw: dict, model_cls: Type[BaseModel]) -> dict:
     """
     Coerce common LLM output formats into schema-friendly values for strict Pydantic validation.
 
-    Focuses on date and decimal fields for CityTarget and IndicatorValue.
+    Focuses on date and decimal fields for CityTarget, IndicatorValue, and InitiativeIndicator.
     """
     normalised = dict(raw)
     name = model_cls.__name__
@@ -133,6 +244,12 @@ def normalize_extracted_item(raw: dict, model_cls: Type[BaseModel]) -> dict:
             normalised["year"] = _normalize_year(normalised["year"])
         if "value" in normalised:
             normalised["value"] = _normalize_decimal(normalised["value"])
+
+    if name == "InitiativeIndicator":
+        if "expectedChange" in normalised:
+            normalised["expectedChange"] = _normalize_decimal(
+                normalised["expectedChange"]
+            )
 
     return normalised
 
@@ -211,6 +328,18 @@ def parse_record_instances(
 
     # Check if this is a verified schema (by checking for VerifiedField fields)
     is_verified_schema = _has_verified_fields(model_cls)
+    model_name = model_cls.__name__
+    if model_name.startswith("Verified"):
+        model_name = model_name[len("Verified") :]
+    pk_alias = get_primary_key_alias(model_name, model_cls)
+    existing_ids: Set[str] = set()
+    if pk_alias:
+        existing_ids = {
+            str(rec.get(pk_alias))
+            for rec in stored
+            if is_valid_uuid(rec.get(pk_alias))
+            and not is_placeholder_uuid(rec.get(pk_alias))
+        }
 
     for idx, raw in enumerate(raw_items):
         if not isinstance(raw, dict):
@@ -225,11 +354,16 @@ def parse_record_instances(
             # If this is a verified schema and we have source text, perform mapping
             if is_verified_schema and source_text:
                 from extraction.utils.verified_utils import map_verified_to_db
-                mapped_output, validation_errors = map_verified_to_db(parsed, source_text, None)
+
+                mapped_output, validation_errors = map_verified_to_db(
+                    parsed, source_text, None
+                )
 
                 if validation_errors:
                     # Reject the record if any quote validation failed
-                    error_details = "; ".join([f"{k}: {v}" for k, v in validation_errors.items()])
+                    error_details = "; ".join(
+                        [f"{k}: {v}" for k, v in validation_errors.items()]
+                    )
                     error_msg = f"Item {idx} quote validation failed: {error_details}"
                     errors.append(error_msg)
                     LOGGER.warning(
@@ -269,6 +403,11 @@ def parse_record_instances(
             )
             continue
 
+        if pk_alias:
+            normalised = ensure_primary_key(
+                normalised, model_name, model_cls, existing_ids
+            )
+
         key = json.dumps(normalised, sort_keys=True, ensure_ascii=False)
         if key in seen_hashes:
             error_msg = f"Item {idx} duplicates an existing entry; skipped."
@@ -278,6 +417,10 @@ def parse_record_instances(
 
         seen_hashes.add(key)
         stored.append(normalised)
+        if pk_alias:
+            pk_value = normalised.get(pk_alias)
+            if is_valid_uuid(pk_value) and not is_placeholder_uuid(pk_value):
+                existing_ids.add(str(pk_value))
         accepted.append(normalised)
         LOGGER.debug("[%s] Successfully accepted item %d", model_cls.__name__, idx)
 
@@ -305,56 +448,31 @@ def parse_record_instances(
 
 def _has_verified_fields(model_cls: Type[BaseModel]) -> bool:
     """
-    Check if a model class contains any VerifiedField fields.
-    
-    Handles both VerifiedField[T] and Optional[VerifiedField[T]] types.
+    Check if a model class contains verified fields (flat structure).
+
+    Detects fields that have corresponding _quote and _confidence fields.
 
     Args:
         model_cls: The Pydantic model class to check.
 
     Returns:
-        True if the model has VerifiedField fields, False otherwise.
+        True if the model has verified fields, False otherwise.
     """
-    try:
-        from extraction.utils.verified_field import VerifiedField
-        import types
-        from typing import Union
+    field_names = set(model_cls.model_fields.keys())
 
-        for field_info in model_cls.model_fields.values():
-            origin = get_origin(field_info.annotation)
-            
-            # Direct VerifiedField[T]
-            if origin is VerifiedField or field_info.annotation is VerifiedField:
-                return True
+    for field_name in field_names:
+        # Skip if this is a quote or confidence field itself
+        if field_name.endswith("_quote") or field_name.endswith("_confidence"):
+            continue
 
-            # Pydantic generics produce specialized subclasses; accept subclasses too.
-            if inspect.isclass(field_info.annotation):
-                try:
-                    if issubclass(field_info.annotation, VerifiedField):
-                        return True
-                except TypeError:
-                    pass
-            
-            # Optional[VerifiedField[T]] = Union[VerifiedField[T], None]
-            union_types = (Union,)
-            if getattr(types, "UnionType", None) is not None:
-                union_types = (Union, types.UnionType)
+        # Check if this field has corresponding _quote and _confidence fields
+        quote_field = f"{field_name}_quote"
+        confidence_field = f"{field_name}_confidence"
 
-            if origin in union_types:
-                args = get_args(field_info.annotation)
-                for arg in args:
-                    if get_origin(arg) is VerifiedField or arg is VerifiedField:
-                        return True
-                    if inspect.isclass(arg):
-                        try:
-                            if issubclass(arg, VerifiedField):
-                                return True
-                        except TypeError:
-                            pass
-        
-        return False
-    except (ImportError, AttributeError):
-        return False
+        if quote_field in field_names and confidence_field in field_names:
+            return True
+
+    return False
 
 
 def handle_response_output(

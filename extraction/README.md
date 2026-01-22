@@ -9,7 +9,7 @@ Structured data extraction from Markdown using the OpenAI Responses API with too
   - `verified_utils.py` – Quote validation and verified-to-database mapping utilities.
 - `prompts/` – system/user prompts and per-class context.
 - `schemas_verified.py` – Extraction-specific schemas with verified fields.
-- `config.yaml` – default model and runtime settings.
+- `llm_config.yml` – default model and runtime settings (extraction section).
 - `output/` – extracted JSON files.
 - `debug_logs/` – optional per-round response logs (controlled by config).
 
@@ -20,7 +20,7 @@ python -m extraction.scripts.extract --markdown path/to/combined_markdown.md
 ```
 
 Flags:
-- `--model` to override the model in `config.yaml`.
+- `--model` to override the model in `llm_config.yml` (extraction.model).
 - `--max-rounds` to override the configured round limit.
 - `--class-names` to target specific Pydantic classes.
 - `--log-level` to override `LOG_LEVEL` (default INFO).
@@ -30,8 +30,37 @@ Environment:
 - `LOG_LEVEL` can control verbosity.
 
 Debug logs:
-- Controlled by `debug_logs_enabled` in `config.yaml`.
+- Controlled by `debug_logs_enabled` in `llm_config.yml` (extraction.debug_logs_enabled).
 - Set `clean_debug_logs_on_start` to remove `extraction/debug_logs` at startup.
+
+## Combined Extraction: IndicatorWithValues
+
+For documents with time-series measurements, use the combined `IndicatorWithValues` schema to extract an indicator definition with all its associated values in a single grouped structure.
+
+**Example output:**
+```json
+{
+  "name": "Population",
+  "unit": "people",
+  "values": [
+    {
+      "year": 2019,
+      "value": "572240",
+      "valueType": "actual",
+      "misc": {
+        "year_proof": {"quote": "In 2019", "confidence": 0.95},
+        "value_proof": {"quote": "572,240 residents", "confidence": 0.95}
+      }
+    }
+  ]
+}
+```
+
+**Benefits:**
+- Links measurements to their parent indicator automatically
+- Keeps related data grouped together
+- Avoids orphaned IndicatorValues
+- Enables better data validation and analysis
 
 ## Evidence Pattern (Verified Extraction)
 
@@ -48,6 +77,7 @@ Certain fields in extraction schemas are marked as "verified" and must include e
 
 - **CityTarget**: `targetYear`, `targetValue`, `baselineYear`, `baselineValue`, `status`
 - **EmissionRecord**: `year`, `value`
+- **IndicatorWithValues**: Combined indicator + multiple values with verified `year` and `value` per measurement
 - **CityBudget**: `year`, `totalAmount`
 - **IndicatorValue**: `year`, `value`
 - **BudgetFunding**: `amount`
