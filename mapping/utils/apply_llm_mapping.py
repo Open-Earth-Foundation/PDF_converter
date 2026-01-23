@@ -52,6 +52,45 @@ DEFAULT_OUTPUT_DIR = MAPPING_DIR / "mapped_output"
 
 LOGGER = logging.getLogger(__name__)
 
+DEFAULT_CITY_TARGET_STATUS = "unknown"
+
+EXPECTED_INPUT_FILES = [
+    "City.json",
+    "ClimateCityContract.json",
+    "CityAnnualStats.json",
+    "EmissionRecord.json",
+    "CityBudget.json",
+    "FundingSource.json",
+    "BudgetFunding.json",
+    "Initiative.json",
+    "Stakeholder.json",
+    "InitiativeStakeholder.json",
+    "Indicator.json",
+    "IndicatorValue.json",
+    "CityTarget.json",
+    "InitiativeIndicator.json",
+    "Sector.json",
+    "TefCategory.json",
+    "InitiativeTef.json",
+]
+
+
+def ensure_city_target_status(
+    city_targets: list[dict], default_status: str = DEFAULT_CITY_TARGET_STATUS
+) -> int:
+    """Set a deterministic status for CityTarget records when missing."""
+    updated = 0
+    for target in city_targets:
+        if target.get("status") in (None, ""):
+            target["status"] = default_status
+            misc = target.get("misc")
+            if not isinstance(misc, dict):
+                misc = {}
+            misc.setdefault("status_source", "default")
+            target["misc"] = misc
+            updated += 1
+    return updated
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -122,25 +161,29 @@ def run_llm_mapping(
 
     # Load inputs - load_json_list raises ValueError on corrupted files (prevents silent data loss)
     try:
-        city_records = load_json_list(input_dir / "City.json")
-        climate_contracts = load_json_list(input_dir / "ClimateCityContract.json")
-        city_stats = load_json_list(input_dir / "CityAnnualStats.json")
-        emissions = load_json_list(input_dir / "EmissionRecord.json")
-        city_budgets = load_json_list(input_dir / "CityBudget.json")
-        funding_sources = load_json_list(input_dir / "FundingSource.json")
-        budget_funding = load_json_list(input_dir / "BudgetFunding.json")
-        initiatives = load_json_list(input_dir / "Initiative.json")
-        stakeholders = load_json_list(input_dir / "Stakeholder.json")
-        initiative_stakeholders = load_json_list(
-            input_dir / "InitiativeStakeholder.json"
-        )
-        indicators = load_json_list(input_dir / "Indicator.json")
-        indicator_values = load_json_list(input_dir / "IndicatorValue.json")
-        city_targets = load_json_list(input_dir / "CityTarget.json")
-        initiative_indicators = load_json_list(input_dir / "InitiativeIndicator.json")
-        sectors = load_json_list(input_dir / "Sector.json")
-        tef_categories = load_json_list(input_dir / "TefCategory.json")
-        initiative_tef = load_json_list(input_dir / "InitiativeTef.json")
+        all_inputs: dict[str, list[dict]] = {}
+        for path in sorted(input_dir.glob("*.json")):
+            all_inputs[path.name] = load_json_list(path)
+        for fname in EXPECTED_INPUT_FILES:
+            all_inputs.setdefault(fname, [])
+
+        city_records = all_inputs["City.json"]
+        climate_contracts = all_inputs["ClimateCityContract.json"]
+        city_stats = all_inputs["CityAnnualStats.json"]
+        emissions = all_inputs["EmissionRecord.json"]
+        city_budgets = all_inputs["CityBudget.json"]
+        funding_sources = all_inputs["FundingSource.json"]
+        budget_funding = all_inputs["BudgetFunding.json"]
+        initiatives = all_inputs["Initiative.json"]
+        stakeholders = all_inputs["Stakeholder.json"]
+        initiative_stakeholders = all_inputs["InitiativeStakeholder.json"]
+        indicators = all_inputs["Indicator.json"]
+        indicator_values = all_inputs["IndicatorValue.json"]
+        city_targets = all_inputs["CityTarget.json"]
+        initiative_indicators = all_inputs["InitiativeIndicator.json"]
+        sectors = all_inputs["Sector.json"]
+        tef_categories = all_inputs["TefCategory.json"]
+        initiative_tef = all_inputs["InitiativeTef.json"]
     except ValueError as exc:
         raise RuntimeError(f"Failed to load input data: {exc}") from exc
 
@@ -303,7 +346,16 @@ def run_llm_mapping(
     map_tef_parent(tef_categories, tef_options, selector, batch_size, api_semaphore)
     LOGGER.info("Completed tef_parent mapping")
 
-    outputs = {
+    status_filled = ensure_city_target_status(city_targets)
+    if status_filled:
+        LOGGER.info(
+            "CityTarget: set default status=%s for %d record(s).",
+            DEFAULT_CITY_TARGET_STATUS,
+            status_filled,
+        )
+
+    outputs = dict(all_inputs)
+    outputs.update({
         "City.json": city_records,
         "ClimateCityContract.json": climate_contracts,
         "CityAnnualStats.json": city_stats,
@@ -321,11 +373,11 @@ def run_llm_mapping(
         "Sector.json": sectors,
         "TefCategory.json": tef_categories,
         "InitiativeTef.json": initiative_tef,
-    }
+    })
 
     if apply:
-        for fname, payload in outputs.items():
-            write_json(output_dir / fname, payload)
+        for fname in sorted(outputs):
+            write_json(output_dir / fname, outputs[fname])
 
     return outputs
 

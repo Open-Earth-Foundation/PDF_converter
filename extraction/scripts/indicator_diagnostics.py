@@ -115,7 +115,7 @@ def run_modes(
     config: dict,
 ) -> None:
     """Run indicator extraction modes."""
-    from database.schemas import Indicator
+    from extraction.schemas_llm import Indicator
     from extraction.schemas_verified import VerifiedIndicatorValue, IndicatorWithValues
 
     for mode in modes:

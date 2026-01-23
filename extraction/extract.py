@@ -413,7 +413,7 @@ def main() -> None:
         timeout=args.timeout,
     )
 
-    models_module = importlib.import_module("database.schemas")
+    models_module = importlib.import_module("extraction.schemas_llm")
     model_classes = extract_model_classes(models_module)
     if args.class_names:
         wanted = set(args.class_names)
