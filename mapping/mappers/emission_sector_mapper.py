@@ -30,12 +30,17 @@ def map_emission_sector(
     selector: LLMSelector,
     batch_size: int = 15,
     api_semaphore: threading.Semaphore | None = None,
+    prompt_suffix: str | None = None,
 ) -> None:
     """Populate sectorId on emission records using the LLM with batch processing."""
     if not sector_options:
         for record in records:
             record["sectorId"] = None
         return
+
+    prompt = PROMPT
+    if prompt_suffix:
+        prompt = f"{PROMPT} {prompt_suffix.strip()}"
 
     candidate_sets = [{"field": "sectorId", "options": sector_options}]
 
@@ -57,7 +62,7 @@ def map_emission_sector(
             batch_selections = selector.select_fields_batch(
                 records=batch_summaries,
                 candidate_sets=candidate_sets,
-                prompt=PROMPT,
+                prompt=prompt,
                 response_format=RESPONSE_FORMAT,
                 batch_label=f"EmissionRecord_batch_{i // batch_size}",
             )

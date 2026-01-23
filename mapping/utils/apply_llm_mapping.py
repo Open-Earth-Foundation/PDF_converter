@@ -74,6 +74,18 @@ EXPECTED_INPUT_FILES = [
     "InitiativeTef.json",
 ]
 
+MAPPER_TARGETS = {
+    "emission_sector",
+    "indicator_sector",
+    "budget_funding",
+    "initiative_stakeholder",
+    "initiative_indicator",
+    "initiative_tef",
+    "indicator_value",
+    "city_target",
+    "tef_parent",
+}
+
 
 def ensure_city_target_status(
     city_targets: list[dict], default_status: str = DEFAULT_CITY_TARGET_STATUS
@@ -134,6 +146,19 @@ def parse_args() -> argparse.Namespace:
         default=5,
         help="Max concurrent API requests across all parallel mappers (default: 5).",
     )
+    parser.add_argument(
+        "--only",
+        default=None,
+        help=(
+            "Comma-separated mapper targets to run "
+            "(e.g. emission_sector,indicator_sector)."
+        ),
+    )
+    parser.add_argument(
+        "--emission-guidance",
+        default=None,
+        help="Extra prompt guidance appended to the EmissionRecord sector mapper.",
+    )
     return parser.parse_args()
 
 
@@ -147,6 +172,8 @@ def run_llm_mapping(
     batch_size: int = 15,
     max_workers: int = 4,
     max_concurrent_api_calls: int = 5,
+    targets: set[str] | None = None,
+    emission_guidance: str | None = None,
 ) -> dict[str, list[dict]]:
     """Execute modular LLM mapping with batch processing and parallel execution."""
     load_dotenv()
@@ -158,6 +185,14 @@ def run_llm_mapping(
         client = OpenAI(api_key=openrouter_key, base_url=base_url or None)
 
     selector = LLMSelector(client, model_name)
+
+    if targets is not None and not targets:
+        targets = None
+
+    if targets:
+        unknown = targets - MAPPER_TARGETS
+        if unknown:
+            raise RuntimeError(f"Unknown mapper target(s): {', '.join(sorted(unknown))}")
 
     # Load inputs - load_json_list raises ValueError on corrupted files (prevents silent data loss)
     try:
@@ -229,130 +264,157 @@ def run_llm_mapping(
     )
 
     # Group 1: Sector mappings (2 parallel mappers, batches throttled by semaphore)
-    LOGGER.info("Group 1: Sector mappings (emission_sector, indicator_sector)...")
-    with ThreadPoolExecutor(max_workers=2) as executor:
-        futures = {
-            executor.submit(
-                map_emission_sector,
-                emissions,
-                sector_options,
-                selector,
-                batch_size,
-                api_semaphore,
-            ): "emission_sector",
-            executor.submit(
-                map_indicator_sector,
-                indicators,
-                sector_options,
-                selector,
-                batch_size,
-                api_semaphore,
-            ): "indicator_sector",
-        }
-        for future in as_completed(futures):
-            name = futures[future]
-            try:
-                future.result()
-                LOGGER.info("Completed %s mapping", name)
-            except Exception as exc:
-                LOGGER.error("Failed %s mapping: %s", name, exc)
-                raise
+    if targets is None or targets.intersection({"emission_sector", "indicator_sector"}):
+        LOGGER.info("Group 1: Sector mappings (emission_sector, indicator_sector)...")
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            futures = {}
+            if targets is None or "emission_sector" in targets:
+                futures[
+                    executor.submit(
+                        map_emission_sector,
+                        emissions,
+                        sector_options,
+                        selector,
+                        batch_size,
+                        api_semaphore,
+                        emission_guidance,
+                    )
+                ] = "emission_sector"
+            if targets is None or "indicator_sector" in targets:
+                futures[
+                    executor.submit(
+                        map_indicator_sector,
+                        indicators,
+                        sector_options,
+                        selector,
+                        batch_size,
+                        api_semaphore,
+                    )
+                ] = "indicator_sector"
+            for future in as_completed(futures):
+                name = futures[future]
+                try:
+                    future.result()
+                    LOGGER.info("Completed %s mapping", name)
+                except Exception as exc:
+                    LOGGER.error("Failed %s mapping: %s", name, exc)
+                    raise
 
     # Group 2: Budget/Funding (single mapper, but batched internally)
-    LOGGER.info("Group 2: Budget funding mappings...")
-    map_budget_funding(
-        budget_funding,
-        budget_options,
-        funding_options,
-        selector,
-        batch_size,
-        api_semaphore,
-    )
-    LOGGER.info("Completed budget_funding mapping")
+    if targets is None or "budget_funding" in targets:
+        LOGGER.info("Group 2: Budget funding mappings...")
+        map_budget_funding(
+            budget_funding,
+            budget_options,
+            funding_options,
+            selector,
+            batch_size,
+            api_semaphore,
+        )
+        LOGGER.info("Completed budget_funding mapping")
 
     # Group 3: Initiative mappings (3 parallel mappers)
-    LOGGER.info("Group 3: Initiative mappings (stakeholder, indicator, tef)...")
-    with ThreadPoolExecutor(max_workers=3) as executor:
-        futures = {
-            executor.submit(
-                map_initiative_stakeholder,
-                initiative_stakeholders,
-                initiative_options,
-                stakeholder_options,
-                selector,
-                batch_size,
-                api_semaphore,
-            ): "initiative_stakeholder",
-            executor.submit(
-                map_initiative_indicator,
-                initiative_indicators,
-                initiative_options,
-                indicator_options,
-                selector,
-                batch_size,
-                api_semaphore,
-            ): "initiative_indicator",
-            executor.submit(
-                map_initiative_tef,
-                initiative_tef,
-                initiative_options,
-                tef_options,
-                selector,
-                batch_size,
-                api_semaphore,
-            ): "initiative_tef",
-        }
-        for future in as_completed(futures):
-            name = futures[future]
-            try:
-                future.result()
-                LOGGER.info("Completed %s mapping", name)
-            except Exception as exc:
-                LOGGER.error("Failed %s mapping: %s", name, exc)
-                raise
+    if targets is None or targets.intersection(
+        {"initiative_stakeholder", "initiative_indicator", "initiative_tef"}
+    ):
+        LOGGER.info("Group 3: Initiative mappings (stakeholder, indicator, tef)...")
+        with ThreadPoolExecutor(max_workers=3) as executor:
+            futures = {}
+            if targets is None or "initiative_stakeholder" in targets:
+                futures[
+                    executor.submit(
+                        map_initiative_stakeholder,
+                        initiative_stakeholders,
+                        initiative_options,
+                        stakeholder_options,
+                        selector,
+                        batch_size,
+                        api_semaphore,
+                    )
+                ] = "initiative_stakeholder"
+            if targets is None or "initiative_indicator" in targets:
+                futures[
+                    executor.submit(
+                        map_initiative_indicator,
+                        initiative_indicators,
+                        initiative_options,
+                        indicator_options,
+                        selector,
+                        batch_size,
+                        api_semaphore,
+                    )
+                ] = "initiative_indicator"
+            if targets is None or "initiative_tef" in targets:
+                futures[
+                    executor.submit(
+                        map_initiative_tef,
+                        initiative_tef,
+                        initiative_options,
+                        tef_options,
+                        selector,
+                        batch_size,
+                        api_semaphore,
+                    )
+                ] = "initiative_tef"
+            for future in as_completed(futures):
+                name = futures[future]
+                try:
+                    future.result()
+                    LOGGER.info("Completed %s mapping", name)
+                except Exception as exc:
+                    LOGGER.error("Failed %s mapping: %s", name, exc)
+                    raise
 
     # Group 4: Indicator mappings (2 parallel mappers)
-    LOGGER.info("Group 4: Indicator mappings (indicator_value, city_target)...")
-    with ThreadPoolExecutor(max_workers=2) as executor:
-        futures = {
-            executor.submit(
-                map_indicator_value,
-                indicator_values,
-                indicator_options,
-                selector,
-                batch_size,
-                api_semaphore,
-            ): "indicator_value",
-            executor.submit(
-                map_city_target,
-                city_targets,
-                indicator_options,
-                selector,
-                batch_size,
-                api_semaphore,
-            ): "city_target",
-        }
-        for future in as_completed(futures):
-            name = futures[future]
-            try:
-                future.result()
-                LOGGER.info("Completed %s mapping", name)
-            except Exception as exc:
-                LOGGER.error("Failed %s mapping: %s", name, exc)
-                raise
+    if targets is None or targets.intersection({"indicator_value", "city_target"}):
+        LOGGER.info("Group 4: Indicator mappings (indicator_value, city_target)...")
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            futures = {}
+            if targets is None or "indicator_value" in targets:
+                futures[
+                    executor.submit(
+                        map_indicator_value,
+                        indicator_values,
+                        indicator_options,
+                        selector,
+                        batch_size,
+                        api_semaphore,
+                    )
+                ] = "indicator_value"
+            if targets is None or "city_target" in targets:
+                futures[
+                    executor.submit(
+                        map_city_target,
+                        city_targets,
+                        indicator_options,
+                        selector,
+                        batch_size,
+                        api_semaphore,
+                    )
+                ] = "city_target"
+            for future in as_completed(futures):
+                name = futures[future]
+                try:
+                    future.result()
+                    LOGGER.info("Completed %s mapping", name)
+                except Exception as exc:
+                    LOGGER.error("Failed %s mapping: %s", name, exc)
+                    raise
 
     # Group 5: Self-referential (sequential, after Group 3)
-    LOGGER.info("Group 5: TEF category parent mapping...")
-    map_tef_parent(tef_categories, tef_options, selector, batch_size, api_semaphore)
-    LOGGER.info("Completed tef_parent mapping")
+    if targets is None or "tef_parent" in targets:
+        LOGGER.info("Group 5: TEF category parent mapping...")
+        map_tef_parent(tef_categories, tef_options, selector, batch_size, api_semaphore)
+        LOGGER.info("Completed tef_parent mapping")
 
-    status_filled = ensure_city_target_status(city_targets)
-    if status_filled:
-        LOGGER.info(
-            "CityTarget: set default status=%s for %d record(s).",
-            DEFAULT_CITY_TARGET_STATUS,
-            status_filled,
-        )
+    if targets is None or "city_target" in targets:
+        status_filled = ensure_city_target_status(city_targets)
+        if status_filled:
+            LOGGER.info(
+                "CityTarget: set default status=%s for %d record(s).",
+                DEFAULT_CITY_TARGET_STATUS,
+                status_filled,
+            )
 
     outputs = dict(all_inputs)
     outputs.update({
@@ -391,6 +453,12 @@ def main() -> int:
             "Mapping model not configured. Set mapping.model in llm_config.yml."
         )
 
+    targets = None
+    if args.only:
+        targets = {item.strip() for item in args.only.split(",") if item.strip()}
+        if not targets:
+            targets = None
+
     outputs = run_llm_mapping(
         input_dir=args.input_dir,
         output_dir=args.output_dir,
@@ -399,6 +467,8 @@ def main() -> int:
         batch_size=args.batch_size,
         max_workers=args.max_workers,
         max_concurrent_api_calls=args.max_concurrent_api_calls,
+        targets=targets,
+        emission_guidance=args.emission_guidance,
     )
 
     for fname, payload in outputs.items():

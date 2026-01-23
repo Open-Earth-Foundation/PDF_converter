@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 from decimal import Decimal
+from typing import Any
 from uuid import UUID, uuid4
 
 from sqlalchemy import ForeignKey, Integer, Numeric, String, Text, UniqueConstraint
-from sqlalchemy.dialects.postgresql import UUID as PG_UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from database.base import Base
@@ -21,6 +22,9 @@ class City(Base):
     locode: Mapped[str | None] = mapped_column("locode", String, nullable=True)
     area_km2: Mapped[Decimal | None] = mapped_column("areaKm2", Numeric, nullable=True)
     notes: Mapped[str | None] = mapped_column("notes", Text, nullable=True)
+    misc: Mapped[dict[str, Any] | None] = mapped_column(
+        "misc", JSONB, nullable=True
+    )
 
 
 class CityAnnualStats(Base):
@@ -44,3 +48,6 @@ class CityAnnualStats(Base):
         "gdpPerCapita", Numeric, nullable=True
     )
     notes: Mapped[str | None] = mapped_column("notes", Text, nullable=True)
+    misc: Mapped[dict[str, Any] | None] = mapped_column(
+        "misc", JSONB, nullable=True
+    )

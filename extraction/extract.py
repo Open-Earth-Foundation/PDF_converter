@@ -8,6 +8,8 @@ Flags:
 - --markdown: path to combined_markdown.md (required)
 - --output-dir: directory for extracted JSON (default: extraction/output)
 - --model/--max-rounds/--class-names/--log-level: overrides for runtime settings
+- --overwrite: clear existing JSON output before extraction
+- --extra-guidance: append extra guidance to class prompts
 """
 
 from __future__ import annotations
@@ -65,6 +67,8 @@ def run_class_extraction(
     output_dir: Path,
     max_rounds: int,
     config: dict | None = None,
+    overwrite: bool = False,
+    extra_guidance: str | None = None,
 ) -> None:
     """
     Run extraction for a single Pydantic model class using chat.completions with tools.
@@ -76,6 +80,9 @@ def run_class_extraction(
                        Used when extraction uses a different schema (e.g., VerifiedCityTarget).
     """
     output_path = output_dir / f"{db_model_name}.json"
+    if overwrite and output_path.exists():
+        output_path.unlink()
+        LOGGER.info("Cleared existing output for %s.", db_model_name)
     stored_instances = load_existing(output_path)
     seen_hashes = {
         json.dumps(entry, sort_keys=True, ensure_ascii=False)
@@ -83,7 +90,10 @@ def run_class_extraction(
     }
     base_extra_body = dict(extra_body or {})
 
-    class_context = escape_braces(load_class_context(db_model_name))
+    class_context_raw = load_class_context(db_model_name)
+    if extra_guidance:
+        class_context_raw = f"{class_context_raw}\n\nAdditional guidance:\n{extra_guidance.strip()}"
+    class_context = escape_braces(class_context_raw)
 
     # Generate compact JSON schema: only include properties and required fields
     # This avoids sending large definitions and examples that bloat the context
@@ -318,6 +328,16 @@ def parse_args() -> argparse.Namespace:
         help="Optional subset of class names to extract (defaults to all BaseDBModel subclasses).",
     )
     parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="Clear existing JSON outputs for selected classes before extraction.",
+    )
+    parser.add_argument(
+        "--extra-guidance",
+        default=None,
+        help="Append extra guidance to class prompts (useful for targeted re-runs).",
+    )
+    parser.add_argument(
         "--log-level",
         default=os.getenv("LOG_LEVEL", "INFO"),
         help="Logging level (DEBUG, INFO, WARNING, ERROR).",
@@ -474,29 +494,38 @@ def main() -> None:
             output_dir=output_dir,
             max_rounds=max_rounds,
             config=config,
+            overwrite=args.overwrite,
+            extra_guidance=args.extra_guidance,
         )
 
     # Extract combined Indicator + IndicatorValues
-    try:
-        indicator_with_values_cls = getattr(verified_module, "IndicatorWithValues")
-        LOGGER.info("Extracting combined IndicatorWithValues...")
-        run_class_extraction(
-            client=client,
-            model_name=model_name,
-            extra_body=extra_body,
-            system_prompt=system_prompt,
-            user_template=user_template,
-            markdown_text=markdown_text,
-            model_cls=indicator_with_values_cls,
-            db_model_name="IndicatorWithValues",
-            output_dir=output_dir,
-            max_rounds=max_rounds,
-            config=config,
-        )
-    except AttributeError:
-        LOGGER.debug(
-            "IndicatorWithValues schema not available, skipping combined extraction"
-        )
+    should_run_combined = True
+    if args.class_names is not None:
+        should_run_combined = "IndicatorWithValues" in args.class_names
+
+    if should_run_combined:
+        try:
+            indicator_with_values_cls = getattr(verified_module, "IndicatorWithValues")
+            LOGGER.info("Extracting combined IndicatorWithValues...")
+            run_class_extraction(
+                client=client,
+                model_name=model_name,
+                extra_body=extra_body,
+                system_prompt=system_prompt,
+                user_template=user_template,
+                markdown_text=markdown_text,
+                model_cls=indicator_with_values_cls,
+                db_model_name="IndicatorWithValues",
+                output_dir=output_dir,
+                max_rounds=max_rounds,
+                config=config,
+                overwrite=args.overwrite,
+                extra_guidance=args.extra_guidance,
+            )
+        except AttributeError:
+            LOGGER.debug(
+                "IndicatorWithValues schema not available, skipping combined extraction"
+            )
 
 
 if __name__ == "__main__":

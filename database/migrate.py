@@ -37,9 +37,9 @@ LOGGER = logging.getLogger(__name__)
 
 
 def require_database_url() -> None:
-    if not os.getenv("DATABASE_URL"):
+    if not (os.getenv("DATABASE_URL") or os.getenv("DB_URL")):
         raise RuntimeError(
-            "DATABASE_URL is not set.\n\n"
+            "DATABASE_URL (or DB_URL) is not set.\n\n"
             "Example:\n"
             "  postgresql+psycopg://urbind:urbind@dev-db-aurora.cluster-c5ipsfxjhb0m.us-east-1.rds.amazonaws.com:5432/urbind"
         )
@@ -172,6 +172,7 @@ def main() -> int:
     cfg = load_alembic_config()
 
     if args.command == "upgrade":
+        LOGGER.info("Running Alembic upgrade to '%s'.", args.revision)
         try:
             command.upgrade(cfg, args.revision)
             LOGGER.info("Migration upgrade to '%s' completed successfully.", args.revision)
@@ -180,6 +181,7 @@ def main() -> int:
             raise
         return 0
     if args.command == "downgrade":
+        LOGGER.info("Running Alembic downgrade to '%s'.", args.revision)
         try:
             command.downgrade(cfg, args.revision)
             LOGGER.info("Migration downgrade to '%s' completed successfully.", args.revision)

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import date
 from decimal import Decimal
+from typing import Any
 from uuid import UUID, uuid4
 
 from sqlalchemy import (
@@ -13,7 +14,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
 )
-from sqlalchemy.dialects.postgresql import UUID as PG_UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from database.base import Base
@@ -35,6 +36,9 @@ class Indicator(Base):
     description: Mapped[str | None] = mapped_column("description", Text, nullable=True)
     unit: Mapped[str] = mapped_column("unit", String, nullable=False)
     notes: Mapped[str | None] = mapped_column("notes", Text, nullable=True)
+    misc: Mapped[dict[str, Any] | None] = mapped_column(
+        "misc", JSONB, nullable=True
+    )
 
 
 class IndicatorValue(Base):
@@ -54,6 +58,9 @@ class IndicatorValue(Base):
     value: Mapped[Decimal] = mapped_column("value", Numeric, nullable=False)
     value_type: Mapped[str] = mapped_column("valueType", String, nullable=False)
     notes: Mapped[str | None] = mapped_column("notes", Text, nullable=True)
+    misc: Mapped[dict[str, Any] | None] = mapped_column(
+        "misc", JSONB, nullable=True
+    )
 
 
 class CityTarget(Base):
@@ -84,3 +91,6 @@ class CityTarget(Base):
     )
     status: Mapped[str] = mapped_column("status", String, nullable=False)
     notes: Mapped[str | None] = mapped_column("notes", Text, nullable=True)
+    misc: Mapped[dict[str, Any] | None] = mapped_column(
+        "misc", JSONB, nullable=True
+    )

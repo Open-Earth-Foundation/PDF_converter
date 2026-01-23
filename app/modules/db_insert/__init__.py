@@ -1,0 +1,1 @@
+"""DB insert module."""

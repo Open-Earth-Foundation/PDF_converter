@@ -23,6 +23,8 @@ Flags:
 - `--model` to override the model in `llm_config.yml` (extraction.model).
 - `--max-rounds` to override the configured round limit.
 - `--class-names` to target specific Pydantic classes.
+- `--overwrite` to clear existing JSON output for the selected classes before extraction.
+- `--extra-guidance` to append custom guidance to the class prompt (useful for re-runs).
 - `--log-level` to override `LOG_LEVEL` (default INFO).
 
 Environment:

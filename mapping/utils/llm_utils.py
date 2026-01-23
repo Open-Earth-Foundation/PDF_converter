@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -227,6 +228,8 @@ class LLMSelector:
         response_format: dict | None = None,
         temperature: float | None = None,
         batch_label: str = "Batch",
+        max_retries: int = 3,
+        retry_delay: float = 2.0,
     ) -> list[dict[str, Any]]:
         """
         Process multiple records in a single LLM call.
@@ -238,6 +241,8 @@ class LLMSelector:
             response_format: Response format override
             temperature: Temperature override
             batch_label: Label for logging
+            max_retries: Maximum number of retries on API errors (default: 3)
+            retry_delay: Initial retry delay in seconds, exponential backoff (default: 2.0)
 
         Returns:
             List of selection dicts, one per input record.
@@ -256,15 +261,14 @@ class LLMSelector:
         options_text = json.dumps(candidate_sets, indent=2, ensure_ascii=False)
         records_text = json.dumps(records, indent=2, ensure_ascii=False)
         structure_hint = '{"batch_results":[{"record_index":0,"selections":[{"field":"fieldName","id":"<uuid or null>","reason":"short justification"}]}]}'
+        max_idx = len(records) - 1
         user_content = (
             f"{prompt}\n\n"
             f"Process the following {len(records)} records:\n{records_text}\n\n"
             f"Options by field:\n{options_text}\n\n"
             f"Return a JSON object exactly like: {structure_hint}. "
-            "Include one entry per record, indexed 0 to {}, each with selections array. "
-            "Do not include any text outside the JSON object. Use null when no option fits.".format(
-                len(records) - 1
-            )
+            f"Include one entry per record, indexed 0 to {max_idx}, each with selections array. "
+            "Do not include any text outside the JSON object. Use null when no option fits."
         )
 
         # Calculate and log prompt size
@@ -286,22 +290,58 @@ class LLMSelector:
             total_tokens,
         )
 
-        # Make API call
-        resp = self.client.chat.completions.create(
-            model=self.model,
-            messages=[
-                {
-                    "role": "system",
-                    "content": "You are a careful data mapper. Only select IDs from the provided options or null. "
-                    "Respond ONLY with JSON matching the requested schema.",
-                },
-                {"role": "user", "content": user_content},
-            ],
-            response_format=response_format or {"type": "json_object"},
-            temperature=(
-                self.default_temperature if temperature is None else temperature
-            ),
-        )
+        # Make API call with retry logic
+        resp = None
+        last_exception = None
+        for attempt in range(max_retries):
+            try:
+                resp = self.client.chat.completions.create(
+                    model=self.model,
+                    messages=[
+                        {
+                            "role": "system",
+                            "content": "You are a careful data mapper. Only select IDs from the provided options or null. "
+                            "Respond ONLY with JSON matching the requested schema.",
+                        },
+                        {"role": "user", "content": user_content},
+                    ],
+                    response_format=response_format or {"type": "json_object"},
+                    temperature=(
+                        self.default_temperature if temperature is None else temperature
+                    ),
+                )
+                break  # Success, exit retry loop
+            except Exception as exc:
+                last_exception = exc
+                if attempt < max_retries - 1:
+                    wait_time = retry_delay * (2**attempt)  # Exponential backoff
+                    LOGGER.warning(
+                        "Batch API call failed for %s (attempt %d/%d), retrying in %.1fs: %s",
+                        batch_label,
+                        attempt + 1,
+                        max_retries,
+                        wait_time,
+                        exc,
+                    )
+                    time.sleep(wait_time)
+                else:
+                    LOGGER.error(
+                        "Batch API call failed for %s after %d attempts: %s",
+                        batch_label,
+                        max_retries,
+                        exc,
+                    )
+
+        if resp is None:
+            # All retries failed, initialize empty results
+            LOGGER.warning(
+                "Batch mapping %s failed after retries, returning null selections",
+                batch_label,
+            )
+            batch_results: list[dict[str, Any]] = [
+                {cs["field"]: None for cs in candidate_sets} for _ in records
+            ]
+            return batch_results
 
         # Parse batch results
         try:

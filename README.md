@@ -231,6 +231,32 @@ python -m mapping.mapping --input extraction/output --review
 
 ---
 
+## Stage 4: Load Into DB (Optional)
+
+```bash
+# Validate only
+python -m app.modules.db_insert.scripts.load_mapped_data --dry-run
+
+# Insert after validation
+python -m app.modules.db_insert.scripts.load_mapped_data
+```
+
+Requires `DATABASE_URL` (or `DB_URL`) in `.env`. Reports are written to `output/db_load_reports/`.
+
+Test the DB connection:
+
+```bash
+python -m app.scripts.test_db_connection
+```
+
+Check row counts and sample rows:
+
+```bash
+python -m app.scripts.test_insert
+```
+
+---
+
 ## Project Structure
 
 ```
