@@ -31,6 +31,7 @@ def map_emission_sector(
     batch_size: int = 15,
     api_semaphore: threading.Semaphore | None = None,
     prompt_suffix: str | None = None,
+    feedback: list[str | None] | None = None,
 ) -> None:
     """Populate sectorId on emission records using the LLM with batch processing."""
     if not sector_options:
@@ -47,11 +48,14 @@ def map_emission_sector(
     # Process in batches (sequential within mapper, but throttled by semaphore)
     for i in range(0, len(records), batch_size):
         batch = records[i : i + batch_size]
+        batch_feedback = feedback[i : i + batch_size] if feedback else None
         batch_summaries = [
             summarise_record(
-                r, ["year", "scope", "ghgType", "value", "unit", "notes", "misc"]
+                r,
+                ["year", "scope", "ghgType", "value", "unit", "notes", "misc"],
+                feedback=batch_feedback[idx] if batch_feedback else None,
             )
-            for r in batch
+            for idx, r in enumerate(batch)
         ]
 
         # Acquire semaphore before API call (if provided)

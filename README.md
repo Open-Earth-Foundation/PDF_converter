@@ -221,12 +221,57 @@ CityTarget            InitiativeIndicator    TefCategory            InitiativeTe
 
 ## Stage 3: Mapping (Optional)
 
-```bash
-# Link foreign keys
-python -m mapping.mapping --input extraction/output --apply
+Link foreign keys between extracted records. Reads from `output/extraction` by default and writes to `output/mapping`.
 
-# Review mappings
-python -m mapping.mapping --input extraction/output --review
+### Quick Start
+
+```bash
+# Link foreign keys (uses default input/output directories)
+python -m mapping.scripts.mapping --apply
+
+# Delete old mappings before re-running
+python -m mapping.scripts.mapping --apply --delete-old
+
+# With custom model
+python -m mapping.scripts.mapping --apply --model gpt-4
+```
+
+### Advanced Usage
+
+```bash
+# Map specific table only
+python -m mapping.scripts.mapping --apply --only-table EmissionRecord
+
+# Custom input/output directories
+python -m mapping.scripts.mapping --apply \
+  --input-dir extraction/output \
+  --work-dir custom/mapping/dir
+
+# Review mappings without applying
+python -m mapping.scripts.mapping --review
+```
+
+### Defaults
+
+- **Input:** `output/extraction/` (extraction outputs)
+- **Output:** `output/mapping/` (linked records)
+
+---
+
+## Full Workflow Example
+
+```bash
+# 1. Extract from markdown
+python -m extraction.scripts.extract \
+  --markdown output/pdf2markdown/20260120_184105_ccc_leipzig/combined_markdown.md \
+  --output-dir output/extraction \
+  --overwrite
+
+# 2. Map foreign keys (uses default dirs: output/extraction → output/mapping)
+python -m mapping.scripts.mapping --apply --delete-old
+
+# 3. Validate mappings
+python -m mapping.scripts.mapping --review
 ```
 
 ---

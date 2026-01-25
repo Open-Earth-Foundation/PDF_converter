@@ -8,6 +8,9 @@ Inputs:
 - --apply/--delete-old
 - --only-table: re-map a single table (e.g. EmissionRecord)
 - --emission-guidance: extra prompt guidance for EmissionRecord mapping
+- --retry-on-issues: re-run LLM mapping for FK/duplicate issues with feedback
+- --retry-rounds: max retry rounds (default: 1)
+- --retry-max-duplicates: max duplicate groups to include in retry planning
 - Env: OPENROUTER_API_KEY (for LLM mapping)
 
 Outputs:
@@ -44,8 +47,9 @@ LOGGER = logging.getLogger(__name__)
 
 # Paths relative to mapping.py location
 MAPPING_DIR = Path(__file__).resolve().parent
-DEFAULT_INPUT_DIR = MAPPING_DIR.parent / "extraction" / "output"
-DEFAULT_WORK_DIR = MAPPING_DIR / "workflow_output"
+REPO_ROOT = MAPPING_DIR.parent
+DEFAULT_INPUT_DIR = REPO_ROOT / "output" / "extraction"
+DEFAULT_WORK_DIR = REPO_ROOT / "output" / "mapping"
 
 # Fields that must be present after LLM mapping.
 FK_VERIFY_FIELDS: dict[str, list[str]] = {
@@ -126,7 +130,9 @@ def read_any_json(path: Path) -> list[dict]:
     except json.JSONDecodeError as exc:
         raise ValueError(f"Invalid or malformed JSON in {path}: {exc}") from exc
     if not isinstance(payload, list):
-        raise ValueError(f"Expected top-level JSON list in {path}, got {type(payload).__name__}")
+        raise ValueError(
+            f"Expected top-level JSON list in {path}, got {type(payload).__name__}"
+        )
     return payload
 
 
@@ -256,7 +262,9 @@ def city_step(input_dir: Path, output_dir: Path) -> tuple[dict, str]:
     city_records, city_status = load_json_list(input_dir / "City.json")
     if city_status not in ("ok", "missing"):
         raise ValueError(f"Invalid City.json: {city_status}")
-    city_record, canonical_city_id = build_city_record(city_records[0] if city_records else None)
+    city_record, canonical_city_id = build_city_record(
+        city_records[0] if city_records else None
+    )
     write_city_json(output_dir / "City.json", [city_record])
     summary["City.json"] = {
         "records": len(city_records or []),
@@ -272,14 +280,24 @@ def city_step(input_dir: Path, output_dir: Path) -> tuple[dict, str]:
         if status not in ("ok", "missing"):
             raise ValueError(f"Invalid {src.name}: {status}")
         if status != "ok" or not records:
-            summary[src.name] = {"records": len(records or []), "updated": 0, "status": status}
+            summary[src.name] = {
+                "records": len(records or []),
+                "updated": 0,
+                "status": status,
+            }
             continue
 
         updated = 0
         if src.name in CITY_ID_FIELDS:
-            updated = apply_city_fk(records, CITY_ID_FIELDS[src.name], canonical_city_id)
+            updated = apply_city_fk(
+                records, CITY_ID_FIELDS[src.name], canonical_city_id
+            )
         write_city_json(output_dir / src.name, records)
-        summary[src.name] = {"records": len(records), "updated": updated, "status": status}
+        summary[src.name] = {
+            "records": len(records),
+            "updated": updated,
+            "status": status,
+        }
     return summary, canonical_city_id
 
 
@@ -340,7 +358,12 @@ def verify_fk_presence_in_memory(outputs: dict[str, list[dict]]) -> dict[str, di
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="End-to-end mapping runner.")
-    parser.add_argument("--input-dir", type=Path, default=DEFAULT_INPUT_DIR, help="Source extraction/output directory.")
+    parser.add_argument(
+        "--input-dir",
+        type=Path,
+        default=DEFAULT_INPUT_DIR,
+        help="Source extraction/output directory.",
+    )
     parser.add_argument(
         "--work-dir",
         type=Path,
@@ -352,7 +375,9 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Override mapping model (defaults to llm_config.yml mapping.model).",
     )
-    parser.add_argument("--apply", action="store_true", help="Persist outputs to work-dir stages.")
+    parser.add_argument(
+        "--apply", action="store_true", help="Persist outputs to work-dir stages."
+    )
     parser.add_argument(
         "--delete-old",
         action="store_true",
@@ -367,6 +392,23 @@ def parse_args() -> argparse.Namespace:
         "--emission-guidance",
         default=None,
         help="Extra prompt guidance appended to EmissionRecord mapping.",
+    )
+    parser.add_argument(
+        "--retry-on-issues",
+        action="store_true",
+        help="Re-run LLM mapping for records with FK/duplicate issues using feedback.",
+    )
+    parser.add_argument(
+        "--retry-rounds",
+        type=int,
+        default=1,
+        help="Max retry rounds for re-mapping problematic records (default: 1).",
+    )
+    parser.add_argument(
+        "--retry-max-duplicates",
+        type=int,
+        default=50,
+        help="Max duplicate groups to include when planning retries (default: 50).",
     )
     return parser.parse_args()
 
@@ -428,6 +470,9 @@ def main() -> int:
                 apply=False,
                 targets={mapper_name},
                 emission_guidance=args.emission_guidance,
+                retry_on_issues=args.retry_on_issues,
+                retry_max_rounds=args.retry_rounds,
+                retry_max_duplicate_groups=args.retry_max_duplicates,
             )
 
             payload = outputs.get(target_file, [])
@@ -483,9 +528,18 @@ def main() -> int:
         llm_cfg = load_llm_config().get("mapping", {})
         model_name = args.model or llm_cfg.get("model")
         if not model_name:
-            raise RuntimeError("Mapping model not configured. Set mapping.model in llm_config.yml.")
+            raise RuntimeError(
+                "Mapping model not configured. Set mapping.model in llm_config.yml."
+            )
         outputs = run_llm_mapping(
-            input_dir=city_dir, output_dir=llm_dir, model_name=model_name, apply=args.apply
+            input_dir=city_dir,
+            output_dir=llm_dir,
+            model_name=model_name,
+            apply=args.apply,
+            emission_guidance=args.emission_guidance,
+            retry_on_issues=args.retry_on_issues,
+            retry_max_rounds=args.retry_rounds,
+            retry_max_duplicate_groups=args.retry_max_duplicates,
         )
 
         for fname, payload in outputs.items():
@@ -515,7 +569,9 @@ def main() -> int:
             LOGGER.info("  City-mapped: %s", city_dir)
             LOGGER.info("  LLM-mapped: %s", llm_dir)
         else:
-            LOGGER.info("Dry run (no files written). Use --apply to persist staged outputs.")
+            LOGGER.info(
+                "Dry run (no files written). Use --apply to persist staged outputs."
+            )
 
     except ValueError as exc:
         LOGGER.error("Data validation failed: %s", exc)
@@ -535,4 +591,3 @@ def main() -> int:
 if __name__ == "__main__":
     setup_logger()
     raise SystemExit(main())
-

@@ -102,20 +102,32 @@ def build_options(
         if not rid:
             continue
         option = {"id": rid}
+        label_parts: list[str] = []
         for key in label_keys:
             if key in record:
-                option[key] = record.get(key)
+                value = record.get(key)
+                option[key] = value
+                if value not in (None, ""):
+                    label_parts.append(f"{key}={value}")
+        if label_parts:
+            option["label"] = " | ".join(label_parts)
         options.append(option)
     return options
 
 
-def summarise_record(record: dict, keep_fields: Iterable[str] | None = None) -> dict:
+def summarise_record(
+    record: dict,
+    keep_fields: Iterable[str] | None = None,
+    feedback: str | None = None,
+) -> dict:
     """Lightweight projection of a record to reduce prompt size."""
     if keep_fields is None:
         keep_fields = [k for k in record.keys() if k not in {"misc"}]
     summary = {k: record.get(k) for k in keep_fields if k in record}
     if record.get("misc"):
         summary["misc"] = record.get("misc")
+    if feedback:
+        summary["mapping_feedback"] = feedback
     return summary
 
 

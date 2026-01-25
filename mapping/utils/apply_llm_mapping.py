@@ -33,6 +33,7 @@ from mapping.utils import (
     set_city_id,
     write_json,
 )
+from mapping.utils.retry_planner import build_retry_plan
 from mapping.mappers.budget_funding_mapper import map_budget_funding
 from mapping.mappers.city_target_mapper import map_city_target
 from mapping.mappers.emission_sector_mapper import map_emission_sector
@@ -84,6 +85,18 @@ MAPPER_TARGETS = {
     "indicator_value",
     "city_target",
     "tef_parent",
+}
+
+RETRY_TABLE_TO_MAPPER = {
+    "EmissionRecord.json": "emission_sector",
+    "Indicator.json": "indicator_sector",
+    "BudgetFunding.json": "budget_funding",
+    "InitiativeStakeholder.json": "initiative_stakeholder",
+    "InitiativeIndicator.json": "initiative_indicator",
+    "InitiativeTef.json": "initiative_tef",
+    "IndicatorValue.json": "indicator_value",
+    "CityTarget.json": "city_target",
+    "TefCategory.json": "tef_parent",
 }
 
 
@@ -159,6 +172,23 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Extra prompt guidance appended to the EmissionRecord sector mapper.",
     )
+    parser.add_argument(
+        "--retry-on-issues",
+        action="store_true",
+        help="Re-run LLM mapping for records with FK/duplicate issues using feedback.",
+    )
+    parser.add_argument(
+        "--retry-rounds",
+        type=int,
+        default=1,
+        help="Max retry rounds for re-mapping problematic records (default: 1).",
+    )
+    parser.add_argument(
+        "--retry-max-duplicates",
+        type=int,
+        default=50,
+        help="Max duplicate groups to include when planning retries (default: 50).",
+    )
     return parser.parse_args()
 
 
@@ -174,6 +204,9 @@ def run_llm_mapping(
     max_concurrent_api_calls: int = 5,
     targets: set[str] | None = None,
     emission_guidance: str | None = None,
+    retry_on_issues: bool = False,
+    retry_max_rounds: int = 1,
+    retry_max_duplicate_groups: int = 50,
 ) -> dict[str, list[dict]]:
     """Execute modular LLM mapping with batch processing and parallel execution."""
     load_dotenv()
@@ -277,7 +310,7 @@ def run_llm_mapping(
                         selector,
                         batch_size,
                         api_semaphore,
-                        emission_guidance,
+                        prompt_suffix=emission_guidance,
                     )
                 ] = "emission_sector"
             if targets is None or "indicator_sector" in targets:
@@ -416,6 +449,270 @@ def run_llm_mapping(
                 status_filled,
             )
 
+    if retry_on_issues:
+        if retry_max_rounds < 1:
+            LOGGER.warning("retry_on_issues set, but retry_max_rounds < 1. Skipping.")
+        else:
+            retry_prompt_suffix = (
+                "These records are being re-mapped because FK validation or uniqueness checks failed. "
+                "Each record includes a mapping_feedback field describing the issue. "
+                "Use it to correct the IDs. Prefer a valid option over null and avoid duplicates when possible."
+            )
+
+            def combine_prompt(*parts: str | None) -> str:
+                return " ".join(part.strip() for part in parts if part and part.strip())
+
+            def build_retry_payload(
+                records: list[dict],
+                feedback_by_index: dict[int, list[str]],
+                table: str,
+            ) -> tuple[list[dict], list[str]]:
+                retry_records: list[dict] = []
+                retry_feedback: list[str] = []
+                for idx in sorted(feedback_by_index.keys()):
+                    if idx >= len(records):
+                        LOGGER.warning(
+                            "Retry index out of range for %s: %d (records=%d)",
+                            table,
+                            idx,
+                            len(records),
+                        )
+                        continue
+                    retry_records.append(records[idx])
+                    messages = feedback_by_index[idx]
+                    retry_feedback.append(" ".join(messages))
+                return retry_records, retry_feedback
+
+            for round_idx in range(retry_max_rounds):
+                records_by_table = {
+                    "City.json": city_records,
+                    "ClimateCityContract.json": climate_contracts,
+                    "CityAnnualStats.json": city_stats,
+                    "EmissionRecord.json": emissions,
+                    "CityBudget.json": city_budgets,
+                    "FundingSource.json": funding_sources,
+                    "BudgetFunding.json": budget_funding,
+                    "Initiative.json": initiatives,
+                    "Stakeholder.json": stakeholders,
+                    "InitiativeStakeholder.json": initiative_stakeholders,
+                    "Indicator.json": indicators,
+                    "IndicatorValue.json": indicator_values,
+                    "CityTarget.json": city_targets,
+                    "InitiativeIndicator.json": initiative_indicators,
+                    "Sector.json": sectors,
+                    "TefCategory.json": tef_categories,
+                    "InitiativeTef.json": initiative_tef,
+                }
+                fk_issues, duplicate_groups, feedback_by_table = build_retry_plan(
+                    records_by_table,
+                    max_duplicate_groups=retry_max_duplicate_groups,
+                )
+
+                if not fk_issues and not duplicate_groups:
+                    LOGGER.info("No FK or duplicate issues detected (retry round %d).", round_idx + 1)
+                    break
+
+                tables_to_retry: dict[str, dict[int, list[str]]] = {}
+                for table, feedback_map in feedback_by_table.items():
+                    mapper_name = RETRY_TABLE_TO_MAPPER.get(table)
+                    if not mapper_name:
+                        continue
+                    if targets is not None and mapper_name not in targets:
+                        continue
+                    tables_to_retry[table] = feedback_map
+
+                if not tables_to_retry:
+                    LOGGER.warning(
+                        "Retry round %d: issues found but no matching mappers to retry.",
+                        round_idx + 1,
+                    )
+                    break
+
+                LOGGER.warning(
+                    "Retry round %d: FK issues=%d duplicate groups=%d tables=%d",
+                    round_idx + 1,
+                    len(fk_issues),
+                    len(duplicate_groups),
+                    len(tables_to_retry),
+                )
+
+                for table, feedback_map in tables_to_retry.items():
+                    if table == "EmissionRecord.json":
+                        retry_records, retry_feedback = build_retry_payload(
+                            emissions, feedback_map, table
+                        )
+                        if retry_records:
+                            prompt = combine_prompt(emission_guidance, retry_prompt_suffix)
+                            LOGGER.warning(
+                                "Retrying %s: records=%d", table, len(retry_records)
+                            )
+                            map_emission_sector(
+                                retry_records,
+                                sector_options,
+                                selector,
+                                batch_size,
+                                api_semaphore,
+                                prompt_suffix=prompt,
+                                feedback=retry_feedback,
+                            )
+                        continue
+
+                    if table == "Indicator.json":
+                        retry_records, retry_feedback = build_retry_payload(
+                            indicators, feedback_map, table
+                        )
+                        if retry_records:
+                            LOGGER.warning(
+                                "Retrying %s: records=%d", table, len(retry_records)
+                            )
+                            map_indicator_sector(
+                                retry_records,
+                                sector_options,
+                                selector,
+                                batch_size,
+                                api_semaphore,
+                                prompt_suffix=retry_prompt_suffix,
+                                feedback=retry_feedback,
+                            )
+                        continue
+
+                    if table == "BudgetFunding.json":
+                        retry_records, retry_feedback = build_retry_payload(
+                            budget_funding, feedback_map, table
+                        )
+                        if retry_records:
+                            LOGGER.warning(
+                                "Retrying %s: records=%d", table, len(retry_records)
+                            )
+                            map_budget_funding(
+                                retry_records,
+                                budget_options,
+                                funding_options,
+                                selector,
+                                batch_size,
+                                api_semaphore,
+                                prompt_suffix=retry_prompt_suffix,
+                                feedback=retry_feedback,
+                            )
+                        continue
+
+                    if table == "InitiativeStakeholder.json":
+                        retry_records, retry_feedback = build_retry_payload(
+                            initiative_stakeholders, feedback_map, table
+                        )
+                        if retry_records:
+                            LOGGER.warning(
+                                "Retrying %s: records=%d", table, len(retry_records)
+                            )
+                            map_initiative_stakeholder(
+                                retry_records,
+                                initiative_options,
+                                stakeholder_options,
+                                selector,
+                                batch_size,
+                                api_semaphore,
+                                prompt_suffix=retry_prompt_suffix,
+                                feedback=retry_feedback,
+                            )
+                        continue
+
+                    if table == "InitiativeIndicator.json":
+                        retry_records, retry_feedback = build_retry_payload(
+                            initiative_indicators, feedback_map, table
+                        )
+                        if retry_records:
+                            LOGGER.warning(
+                                "Retrying %s: records=%d", table, len(retry_records)
+                            )
+                            map_initiative_indicator(
+                                retry_records,
+                                initiative_options,
+                                indicator_options,
+                                selector,
+                                batch_size,
+                                api_semaphore,
+                                prompt_suffix=retry_prompt_suffix,
+                                feedback=retry_feedback,
+                            )
+                        continue
+
+                    if table == "InitiativeTef.json":
+                        retry_records, retry_feedback = build_retry_payload(
+                            initiative_tef, feedback_map, table
+                        )
+                        if retry_records:
+                            LOGGER.warning(
+                                "Retrying %s: records=%d", table, len(retry_records)
+                            )
+                            map_initiative_tef(
+                                retry_records,
+                                initiative_options,
+                                tef_options,
+                                selector,
+                                batch_size,
+                                api_semaphore,
+                                prompt_suffix=retry_prompt_suffix,
+                                feedback=retry_feedback,
+                            )
+                        continue
+
+                    if table == "IndicatorValue.json":
+                        retry_records, retry_feedback = build_retry_payload(
+                            indicator_values, feedback_map, table
+                        )
+                        if retry_records:
+                            LOGGER.warning(
+                                "Retrying %s: records=%d", table, len(retry_records)
+                            )
+                            map_indicator_value(
+                                retry_records,
+                                indicator_options,
+                                selector,
+                                batch_size,
+                                api_semaphore,
+                                prompt_suffix=retry_prompt_suffix,
+                                feedback=retry_feedback,
+                            )
+                        continue
+
+                    if table == "CityTarget.json":
+                        retry_records, retry_feedback = build_retry_payload(
+                            city_targets, feedback_map, table
+                        )
+                        if retry_records:
+                            LOGGER.warning(
+                                "Retrying %s: records=%d", table, len(retry_records)
+                            )
+                            map_city_target(
+                                retry_records,
+                                indicator_options,
+                                selector,
+                                batch_size,
+                                api_semaphore,
+                                prompt_suffix=retry_prompt_suffix,
+                                feedback=retry_feedback,
+                            )
+                        continue
+
+                    if table == "TefCategory.json":
+                        retry_records, retry_feedback = build_retry_payload(
+                            tef_categories, feedback_map, table
+                        )
+                        if retry_records:
+                            LOGGER.warning(
+                                "Retrying %s: records=%d", table, len(retry_records)
+                            )
+                            map_tef_parent(
+                                retry_records,
+                                tef_options,
+                                selector,
+                                batch_size,
+                                api_semaphore,
+                                prompt_suffix=retry_prompt_suffix,
+                                feedback=retry_feedback,
+                            )
+                        continue
+
     outputs = dict(all_inputs)
     outputs.update({
         "City.json": city_records,
@@ -469,6 +766,9 @@ def main() -> int:
         max_concurrent_api_calls=args.max_concurrent_api_calls,
         targets=targets,
         emission_guidance=args.emission_guidance,
+        retry_on_issues=args.retry_on_issues,
+        retry_max_rounds=args.retry_rounds,
+        retry_max_duplicate_groups=args.retry_max_duplicates,
     )
 
     for fname, payload in outputs.items():

@@ -31,8 +31,14 @@ def map_initiative_indicator(
     selector: LLMSelector,
     batch_size: int = 15,
     api_semaphore: threading.Semaphore | None = None,
+    prompt_suffix: str | None = None,
+    feedback: list[str | None] | None = None,
 ) -> None:
     """Populate initiativeId and indicatorId on InitiativeIndicator records with batch processing."""
+    prompt = PROMPT
+    if prompt_suffix:
+        prompt = f"{PROMPT} {prompt_suffix.strip()}"
+
     candidate_sets = [
         {"field": "initiativeId", "options": initiative_options},
         {"field": "indicatorId", "options": indicator_options},
@@ -41,9 +47,14 @@ def map_initiative_indicator(
     # Process in batches (sequential within mapper, but throttled by semaphore)
     for i in range(0, len(records), batch_size):
         batch = records[i : i + batch_size]
+        batch_feedback = feedback[i : i + batch_size] if feedback else None
         batch_summaries = [
-            summarise_record(r, ["contributionType", "expectedChange", "notes"])
-            for r in batch
+            summarise_record(
+                r,
+                ["contributionType", "expectedChange", "notes"],
+                feedback=batch_feedback[idx] if batch_feedback else None,
+            )
+            for idx, r in enumerate(batch)
         ]
 
         # Acquire semaphore before API call (if provided)
@@ -54,7 +65,7 @@ def map_initiative_indicator(
             batch_selections = selector.select_fields_batch(
                 records=batch_summaries,
                 candidate_sets=candidate_sets,
-                prompt=PROMPT,
+                prompt=prompt,
                 response_format=RESPONSE_FORMAT,
                 batch_label=f"InitiativeIndicator_batch_{i // batch_size}",
             )

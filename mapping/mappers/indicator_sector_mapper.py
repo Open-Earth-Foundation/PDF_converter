@@ -29,6 +29,8 @@ def map_indicator_sector(
     selector: LLMSelector,
     batch_size: int = 15,
     api_semaphore: threading.Semaphore | None = None,
+    prompt_suffix: str | None = None,
+    feedback: list[str | None] | None = None,
 ) -> None:
     """Populate sectorId on indicators using the LLM with batch processing."""
     if not sector_options:
@@ -36,13 +38,23 @@ def map_indicator_sector(
             record["sectorId"] = None
         return
 
+    prompt = PROMPT
+    if prompt_suffix:
+        prompt = f"{PROMPT} {prompt_suffix.strip()}"
+
     candidate_sets = [{"field": "sectorId", "options": sector_options}]
 
     # Process in batches (sequential within mapper, but throttled by semaphore)
     for i in range(0, len(records), batch_size):
         batch = records[i : i + batch_size]
+        batch_feedback = feedback[i : i + batch_size] if feedback else None
         batch_summaries = [
-            summarise_record(r, ["name", "description", "notes", "misc"]) for r in batch
+            summarise_record(
+                r,
+                ["name", "description", "notes", "misc"],
+                feedback=batch_feedback[idx] if batch_feedback else None,
+            )
+            for idx, r in enumerate(batch)
         ]
 
         # Acquire semaphore before API call (if provided)
@@ -53,7 +65,7 @@ def map_indicator_sector(
             batch_selections = selector.select_fields_batch(
                 records=batch_summaries,
                 candidate_sets=candidate_sets,
-                prompt=PROMPT,
+                prompt=prompt,
                 response_format=RESPONSE_FORMAT,
                 batch_label=f"Indicator_batch_{i // batch_size}",
             )
