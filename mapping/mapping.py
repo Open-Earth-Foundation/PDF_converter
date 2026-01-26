@@ -11,6 +11,7 @@ Inputs:
 - --retry-on-issues: re-run LLM mapping for FK/duplicate issues with feedback
 - --retry-rounds: max retry rounds (default: 1)
 - --retry-max-duplicates: max duplicate groups to include in retry planning
+- --use-option-indexes: use numeric option indexes for LLM selection
 - Env: OPENROUTER_API_KEY (for LLM mapping)
 
 Outputs:
@@ -410,6 +411,11 @@ def parse_args() -> argparse.Namespace:
         default=50,
         help="Max duplicate groups to include when planning retries (default: 50).",
     )
+    parser.add_argument(
+        "--use-option-indexes",
+        action="store_true",
+        help="Use numeric option indexes for LLM selection and map them back to IDs.",
+    )
     return parser.parse_args()
 
 
@@ -473,6 +479,7 @@ def main() -> int:
                 retry_on_issues=args.retry_on_issues,
                 retry_max_rounds=args.retry_rounds,
                 retry_max_duplicate_groups=args.retry_max_duplicates,
+                use_option_indexes=args.use_option_indexes,
             )
 
             payload = outputs.get(target_file, [])
@@ -540,6 +547,7 @@ def main() -> int:
             retry_on_issues=args.retry_on_issues,
             retry_max_rounds=args.retry_rounds,
             retry_max_duplicate_groups=args.retry_max_duplicates,
+            use_option_indexes=args.use_option_indexes,
         )
 
         for fname, payload in outputs.items():

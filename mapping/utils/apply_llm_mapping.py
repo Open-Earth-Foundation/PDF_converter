@@ -189,6 +189,11 @@ def parse_args() -> argparse.Namespace:
         default=50,
         help="Max duplicate groups to include when planning retries (default: 50).",
     )
+    parser.add_argument(
+        "--use-option-indexes",
+        action="store_true",
+        help="Use numeric indexes for LLM option selection and map them back to IDs.",
+    )
     return parser.parse_args()
 
 
@@ -207,6 +212,7 @@ def run_llm_mapping(
     retry_on_issues: bool = False,
     retry_max_rounds: int = 1,
     retry_max_duplicate_groups: int = 50,
+    use_option_indexes: bool = False,
 ) -> dict[str, list[dict]]:
     """Execute modular LLM mapping with batch processing and parallel execution."""
     load_dotenv()
@@ -217,7 +223,9 @@ def run_llm_mapping(
             raise RuntimeError("OPENROUTER_API_KEY must be set for LLM mapping.")
         client = OpenAI(api_key=openrouter_key, base_url=base_url or None)
 
-    selector = LLMSelector(client, model_name)
+    selector = LLMSelector(
+        client, model_name, use_option_indexes=use_option_indexes
+    )
 
     if targets is not None and not targets:
         targets = None
@@ -268,22 +276,47 @@ def run_llm_mapping(
     set_city_id(city_targets, ["cityId"], canonical_city_id)
 
     # Build selection options
-    sector_options = build_options(sectors, "sectorId", ("sectorName", "description"))
+    sector_options = build_options(
+        sectors,
+        "sectorId",
+        ("sectorName", "description"),
+        include_index=use_option_indexes,
+    )
     indicator_options = build_options(
-        indicators, "indicatorId", ("name", "description")
+        indicators,
+        "indicatorId",
+        ("name", "description"),
+        include_index=use_option_indexes,
     )
     initiative_options = build_options(
-        initiatives, "initiativeId", ("title", "description")
+        initiatives,
+        "initiativeId",
+        ("title", "description"),
+        include_index=use_option_indexes,
     )
-    stakeholder_options = build_options(stakeholders, "stakeholderId", ("name", "type"))
+    stakeholder_options = build_options(
+        stakeholders,
+        "stakeholderId",
+        ("name", "type"),
+        include_index=use_option_indexes,
+    )
     budget_options = build_options(
-        city_budgets, "budgetId", ("description", "year", "totalAmount")
+        city_budgets,
+        "budgetId",
+        ("description", "year", "totalAmount"),
+        include_index=use_option_indexes,
     )
     funding_options = build_options(
-        funding_sources, "fundingSourceId", ("name", "type", "description")
+        funding_sources,
+        "fundingSourceId",
+        ("name", "type", "description"),
+        include_index=use_option_indexes,
     )
     tef_options = build_options(
-        tef_categories, "tefId", ("code", "name", "description")
+        tef_categories,
+        "tefId",
+        ("code", "name", "description"),
+        include_index=use_option_indexes,
     )
 
     # Create shared semaphore to throttle API calls across all parallel mappers
@@ -769,6 +802,7 @@ def main() -> int:
         retry_on_issues=args.retry_on_issues,
         retry_max_rounds=args.retry_rounds,
         retry_max_duplicate_groups=args.retry_max_duplicates,
+        use_option_indexes=args.use_option_indexes,
     )
 
     for fname, payload in outputs.items():

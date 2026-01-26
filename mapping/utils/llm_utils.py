@@ -93,15 +93,23 @@ def set_city_id(
 
 
 def build_options(
-    records: list[dict], id_key: str, label_keys: tuple[str, ...]
+    records: list[dict],
+    id_key: str,
+    label_keys: tuple[str, ...],
+    *,
+    include_index: bool = False,
 ) -> list[dict]:
     """Build selectable option list: [{id, label...}]."""
     options: list[dict] = []
+    option_index = 1
     for record in records:
         rid = record.get(id_key)
         if not rid:
             continue
         option = {"id": rid}
+        if include_index:
+            option["index"] = option_index
+            option_index += 1
         label_parts: list[str] = []
         for key in label_keys:
             if key in record:
@@ -134,10 +142,47 @@ def summarise_record(
 class LLMSelector:
     """Helper to call the LLM with structured output."""
 
-    def __init__(self, client: Any, model: str, default_temperature: float = 0.0):
+    def __init__(
+        self,
+        client: Any,
+        model: str,
+        default_temperature: float = 0.0,
+        use_option_indexes: bool = False,
+    ):
         self.client = client
         self.model = model
         self.default_temperature = default_temperature
+        self.use_option_indexes = use_option_indexes
+
+    def _prepare_candidate_sets(
+        self,
+        candidate_sets: list[dict],
+    ) -> tuple[list[dict], dict[str, dict[int, Any]]]:
+        if not self.use_option_indexes:
+            return candidate_sets, {}
+        prompt_sets: list[dict] = []
+        index_maps: dict[str, dict[int, Any]] = {}
+        for candidate_set in candidate_sets:
+            field = candidate_set["field"]
+            options = candidate_set.get("options") or []
+            prompt_options: list[dict] = []
+            index_map: dict[int, Any] = {}
+            for option in options:
+                idx = option.get("index")
+                if idx is None:
+                    continue
+                try:
+                    idx_int = int(idx)
+                except (TypeError, ValueError):
+                    continue
+                label = option.get("label")
+                if not label:
+                    label = "(missing label)"
+                prompt_options.append({"index": idx_int, "label": label})
+                index_map[idx_int] = option.get("id")
+            prompt_sets.append({"field": field, "options": prompt_options})
+            index_maps[field] = index_map
+        return prompt_sets, index_maps
 
     def select_fields(
         self,
@@ -173,15 +218,22 @@ class LLMSelector:
         if not pending:
             return selections
 
-        options_text = json.dumps(pending, indent=2, ensure_ascii=False)
+        prompt_candidate_sets, index_maps = self._prepare_candidate_sets(pending)
+        options_text = json.dumps(prompt_candidate_sets, indent=2, ensure_ascii=False)
         record_text = json.dumps(record, indent=2, ensure_ascii=False)
-        structure_hint = '{"selections":[{"field":"fieldName","id":"<uuid or null>","reason":"short justification"}]}'
+        if self.use_option_indexes:
+            structure_hint = '{"selections":[{"field":"fieldName","index":1,"reason":"short justification"}]}'
+            response_note = "Return index values from options. Do not return ids."
+        else:
+            structure_hint = '{"selections":[{"field":"fieldName","id":"<uuid or null>","reason":"short justification"}]}'
+            response_note = "Return ids from options."
         user_content = (
             f"{prompt}\n\n"
             f"Record ({record_label}):\n{record_text}\n\n"
             f"Options by field:\n{options_text}\n\n"
             f"Return a JSON object exactly like: {structure_hint}. "
-            "Do not include any text outside the JSON object. Use null when no option fits."
+            f"{response_note} Do not include any text outside the JSON object. "
+            "Use null when no option fits."
         )
 
         # Calculate and log prompt size
@@ -227,7 +279,17 @@ class LLMSelector:
             field = entry.get("field")
             if not field:
                 continue
-            selections[field] = entry.get("id")
+            if "id" in entry:
+                selections[field] = entry.get("id")
+                continue
+            if "index" in entry:
+                try:
+                    idx = int(entry.get("index"))
+                except (TypeError, ValueError):
+                    continue
+                mapped = index_maps.get(field, {}).get(idx)
+                if mapped is not None:
+                    selections[field] = mapped
 
         return selections
 
@@ -270,9 +332,15 @@ class LLMSelector:
             return [{cs["field"]: None for cs in candidate_sets} for _ in records]
 
         # Build batch prompt with all records
-        options_text = json.dumps(candidate_sets, indent=2, ensure_ascii=False)
+        prompt_candidate_sets, index_maps = self._prepare_candidate_sets(candidate_sets)
+        options_text = json.dumps(prompt_candidate_sets, indent=2, ensure_ascii=False)
         records_text = json.dumps(records, indent=2, ensure_ascii=False)
-        structure_hint = '{"batch_results":[{"record_index":0,"selections":[{"field":"fieldName","id":"<uuid or null>","reason":"short justification"}]}]}'
+        if self.use_option_indexes:
+            structure_hint = '{"batch_results":[{"record_index":0,"selections":[{"field":"fieldName","index":1,"reason":"short justification"}]}]}'
+            response_note = "Return index values from options. Do not return ids."
+        else:
+            structure_hint = '{"batch_results":[{"record_index":0,"selections":[{"field":"fieldName","id":"<uuid or null>","reason":"short justification"}]}]}'
+            response_note = "Return ids from options."
         max_idx = len(records) - 1
         user_content = (
             f"{prompt}\n\n"
@@ -280,7 +348,8 @@ class LLMSelector:
             f"Options by field:\n{options_text}\n\n"
             f"Return a JSON object exactly like: {structure_hint}. "
             f"Include one entry per record, indexed 0 to {max_idx}, each with selections array. "
-            "Do not include any text outside the JSON object. Use null when no option fits."
+            f"{response_note} Do not include any text outside the JSON object. "
+            "Use null when no option fits."
         )
 
         # Calculate and log prompt size
@@ -362,13 +431,55 @@ class LLMSelector:
             LOGGER.error("Failed to parse batch response for %s: %s", batch_label, exc)
             payload = {}
 
+        raw_results = payload.get("batch_results")
+        if isinstance(raw_results, dict):
+            if "record_index" in raw_results or "selections" in raw_results:
+                raw_results = [raw_results]
+            else:
+                normalized: list[dict[str, Any]] = []
+                for key, value in raw_results.items():
+                    if not isinstance(value, dict):
+                        continue
+                    entry = dict(value)
+                    if "record_index" not in entry:
+                        try:
+                            entry["record_index"] = int(key)
+                        except (TypeError, ValueError):
+                            entry["record_index"] = None
+                    normalized.append(entry)
+                raw_results = normalized
+        elif isinstance(raw_results, list):
+            pass
+        elif isinstance(payload, dict) and "selections" in payload:
+            raw_results = [
+                {
+                    "record_index": 0,
+                    "selections": payload.get("selections", []),
+                }
+            ]
+        else:
+            if raw_results is not None:
+                LOGGER.warning(
+                    "Unexpected batch_results type for %s: %s",
+                    batch_label,
+                    type(raw_results).__name__,
+                )
+            raw_results = []
+
         # Initialize results: one entry per record with all fields mapped to None
         batch_results: list[dict[str, Any]] = [
             {cs["field"]: None for cs in candidate_sets} for _ in records
         ]
 
         # Populate results from LLM response
-        for result_entry in payload.get("batch_results", []):
+        for result_entry in raw_results:
+            if not isinstance(result_entry, dict):
+                LOGGER.warning(
+                    "Invalid batch result entry for %s: %s",
+                    batch_label,
+                    type(result_entry).__name__,
+                )
+                continue
             record_idx = result_entry.get("record_index")
             if record_idx is None or not isinstance(record_idx, int):
                 continue
@@ -381,11 +492,26 @@ class LLMSelector:
                 )
                 continue
 
-            for selection in result_entry.get("selections", []):
+            selections = result_entry.get("selections")
+            if not isinstance(selections, list):
+                continue
+            for selection in selections:
+                if not isinstance(selection, dict):
+                    continue
                 field = selection.get("field")
                 if not field:
                     continue
-                batch_results[record_idx][field] = selection.get("id")
+                if "id" in selection:
+                    batch_results[record_idx][field] = selection.get("id")
+                    continue
+                if "index" in selection:
+                    try:
+                        idx = int(selection.get("index"))
+                    except (TypeError, ValueError):
+                        continue
+                    mapped = index_maps.get(field, {}).get(idx)
+                    if mapped is not None:
+                        batch_results[record_idx][field] = mapped
 
         LOGGER.debug(
             "Batch mapping complete for %s: %d records processed",

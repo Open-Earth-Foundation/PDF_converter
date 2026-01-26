@@ -29,11 +29,13 @@ from app.modules.db_insert.utils.schema_utils import get_schema_info, to_model_p
 LOGGER = logging.getLogger(__name__)
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-DEFAULT_INPUT_DIR = REPO_ROOT / "mapping" / "workflow_output" / "step3_llm"
+DEFAULT_INPUT_DIR = REPO_ROOT / "output" / "mapping" / "step3_llm"
 DEFAULT_REPORT_DIR = REPO_ROOT / "output" / "db_load_reports"
 
 TABLE_SPECS: list[TableSpec] = [
-    TableSpec("City", "City.json", db_schemas.City, db_models.City, "city_id", "cityId"),
+    TableSpec(
+        "City", "City.json", db_schemas.City, db_models.City, "city_id", "cityId"
+    ),
     TableSpec(
         "Sector",
         "Sector.json",
@@ -210,6 +212,87 @@ def get_record_id(
     return None
 
 
+def check_duplicates_in_records(
+    spec: TableSpec,
+    raw_records: list[dict[str, Any]],
+    report: LoadReport,
+) -> None:
+    """Check for duplicate unique keys within the mapping records."""
+    if not raw_records:
+        return
+
+    seen_ids: dict[str, int] = {}
+    # it was the most problematic table so i added this
+    # For InitiativeStakeholder, check composite key (initiativeId, stakeholderId)
+    if spec.name == "InitiativeStakeholder":
+        seen_composite: dict[tuple, int] = {}
+        for idx, raw in enumerate(raw_records):
+            if not isinstance(raw, dict):
+                continue
+            initiative_id = raw.get("initiativeId")
+            stakeholder_id = raw.get("stakeholderId")
+            if initiative_id and stakeholder_id:
+                composite_key = (str(initiative_id), str(stakeholder_id))
+                if composite_key in seen_composite:
+                    report.record_error(
+                        {
+                            "table": spec.name,
+                            "record_index": idx,
+                            "record_id": raw.get("initiativeStakeholderId"),
+                            "stage": "validation",
+                            "field": "initiativeId,stakeholderId",
+                            "message": f"Duplicate composite key (initiativeId={initiative_id}, stakeholderId={stakeholder_id}) at records {seen_composite[composite_key]} and {idx}",
+                            "error_type": "duplicate_composite_key",
+                        }
+                    )
+                    LOGGER.warning(
+                        "⚠️  %s[%d]: Duplicate (initiativeId=%s, stakeholderId=%s) also at index %d",
+                        spec.name,
+                        idx,
+                        initiative_id,
+                        stakeholder_id,
+                        seen_composite[composite_key],
+                    )
+                    report.tables[spec.name].failed += 1
+                else:
+                    seen_composite[composite_key] = idx
+        return
+
+    # For other tables, check primary key
+    if not spec.pk_alias:
+        return
+
+    for idx, raw in enumerate(raw_records):
+        if not isinstance(raw, dict):
+            continue
+        record_id = raw.get(spec.pk_alias)
+        if record_id:
+            record_id_str = str(record_id)
+            if record_id_str in seen_ids:
+                report.record_error(
+                    {
+                        "table": spec.name,
+                        "record_index": idx,
+                        "record_id": record_id_str,
+                        "stage": "validation",
+                        "field": spec.pk_alias,
+                        "message": f"Duplicate {spec.pk_alias}={record_id_str} (first seen at record index {seen_ids[record_id_str]})",
+                        "error_type": "duplicate_key",
+                    }
+                )
+                LOGGER.warning(
+                    "⚠️  %s[%d]: Duplicate %s=%s (also at index %d)",
+                    spec.name,
+                    idx,
+                    spec.pk_alias,
+                    record_id_str,
+                    seen_ids[record_id_str],
+                )
+                report.tables[spec.name].failed += 1
+            else:
+                seen_ids[record_id_str] = idx
+
+
 def process_table_records(
     spec: TableSpec,
     raw_records: list[dict[str, Any]],
@@ -220,6 +303,14 @@ def process_table_records(
     info = get_schema_info(spec.schema)
     processed: list[dict[str, Any]] = []
     drop_unknown = mode == "permissive"
+
+    # Check for duplicates within the mapping data
+    check_duplicates_in_records(spec, raw_records, report)
+
+    # If duplicates found and on_error is stop, raise immediately
+    if report.error_count_total > 0 and on_error == "stop":
+        raise StopProcessing("Duplicate records found in mapping data.")
+
     for idx, raw in enumerate(raw_records):
         if not isinstance(raw, dict):
             report.tables[spec.name].failed += 1
@@ -233,6 +324,9 @@ def process_table_records(
                     "message": f"Expected object, got {type(raw).__name__}",
                     "error_type": "type_error",
                 }
+            )
+            LOGGER.error(
+                "❌ %s[%d]: Expected object, got %s", spec.name, idx, type(raw).__name__
             )
             if on_error == "stop":
                 raise StopProcessing("Non-dict record encountered.")
@@ -251,6 +345,15 @@ def process_table_records(
                     loc = err.get("loc", [])
                     field_name = ".".join(str(item) for item in loc) if loc else None
                     err_type = err.get("type")
+                    msg = err.get("msg")
+                    LOGGER.error(
+                        "❌ %s[%d] %s: %s (%s)",
+                        spec.name,
+                        idx,
+                        field_name or "general",
+                        msg,
+                        err_type,
+                    )
                     report.record_error(
                         {
                             "table": spec.name,
@@ -258,7 +361,7 @@ def process_table_records(
                             "record_id": record_id,
                             "stage": "validation",
                             "field": field_name,
-                            "message": err.get("msg"),
+                            "message": msg,
                             "error_type": err_type,
                         }
                     )
@@ -269,6 +372,7 @@ def process_table_records(
                     raise StopProcessing("Validation errors encountered.")
             except Exception as exc:
                 report.tables[spec.name].failed += 1
+                LOGGER.error("❌ %s[%d]: %s", spec.name, idx, str(exc))
                 report.record_error(
                     {
                         "table": spec.name,
@@ -322,6 +426,14 @@ def insert_records(
         except IntegrityError as exc:
             nested.rollback()
             report.tables[spec.name].failed += 1
+            err_msg = str(exc.orig) if exc.orig else str(exc)
+            LOGGER.error(
+                "❌ %s[%d] %s: %s",
+                spec.name,
+                idx,
+                record_id or "N/A",
+                err_msg,
+            )
             report.record_error(
                 {
                     "table": spec.name,
@@ -329,7 +441,7 @@ def insert_records(
                     "record_id": str(record_id) if record_id else None,
                     "stage": "insert",
                     "field": None,
-                    "message": str(exc.orig) if exc.orig else str(exc),
+                    "message": err_msg,
                     "error_type": "integrity_error",
                 }
             )
@@ -338,6 +450,13 @@ def insert_records(
         except Exception as exc:
             nested.rollback()
             report.tables[spec.name].failed += 1
+            LOGGER.error(
+                "❌ %s[%d] %s: %s",
+                spec.name,
+                idx,
+                record_id or "N/A",
+                str(exc),
+            )
             report.record_error(
                 {
                     "table": spec.name,
@@ -450,7 +569,10 @@ def run_load(
                                     on_error=on_error,
                                     report=report,
                                 )
-                                if mode == "validate" and report.tables[spec.name].failed:
+                                if (
+                                    mode == "validate"
+                                    and report.tables[spec.name].failed
+                                ):
                                     validation_failed = True
                                 if dry_run:
                                     continue
