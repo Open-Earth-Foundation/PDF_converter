@@ -67,6 +67,8 @@ cp .env.example .env
 
 ```
 DATABASE_URL=postgresql+psycopg://pdf_user:pdf_pass@localhost:5432/pdf_converter
+# Or use the alias:
+# DB_URL=postgresql+psycopg://pdf_user:pdf_pass@localhost:5432/pdf_converter
 ```
 
 For Docker Compose, use the same URL as above. For manual setup, adjust `localhost` or password as needed.

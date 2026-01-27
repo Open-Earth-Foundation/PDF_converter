@@ -6,6 +6,10 @@ Inputs:
 - --output-dir: destination directory for mapped JSON
 - --model: override mapping model (defaults to llm_config.yml mapping.model)
 - --apply: write mapped files (default: dry-run)
+- --retry-on-issues: re-run LLM mapping for FK/duplicate issues using feedback
+- --retry-rounds: max retry rounds (default: 1)
+- --retry-max-duplicates: max duplicate groups to include in retry planning
+- --use-option-indexes: use numeric option indexes for LLM selection
 - Env: OPENROUTER_API_KEY
 
 Outputs:

@@ -1,12 +1,26 @@
 pdf2markdown:
-  model: google/gemini-3-flash-preview
+  model: openai/gpt-5-mini
   temperature: 0.1
   ocr_model: mistral-ocr-latest
 
 extraction:
-  model: openai/gpt-5-mini
+  model:  openai/gpt-5-mini
   temperature: 0.1
+  token_limit: 900000
+  max_rounds: 12
+  debug_logs_enabled: true
+  clean_debug_logs_on_start: true
+  debug_logs_full_response_once: true
+  debug_logs_full_response: true
+  chunking:
+    enabled: false
+    auto_threshold_tokens: 300000
+    chunk_size_tokens: 200000
+    chunk_overlap_tokens: 10000
+    boundary_mode: paragraph_or_sentence
+    keep_tables_intact: true
+    table_context_max_items: 0 # 0 = include all same-table rows; reduce to limit prompt size
 
 mapping:
-  model: google/gemini-3-flash-preview
+  model:  openai/gpt-5-mini
   temperature: 0.1

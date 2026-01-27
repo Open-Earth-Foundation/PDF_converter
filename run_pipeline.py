@@ -5,6 +5,7 @@ Inputs:
 - --input: optional PDF file (defaults to all PDFs in documents/)
 - --no-vision: skip vision refinement
 - --no-mapping: skip mapping stage
+- --chunking/--chunk-size-tokens/--chunk-overlap-tokens/--chunk-auto-threshold-tokens: optional overrides passed to extraction
 - Env: MISTRAL_API_KEY, OPENAI_API_KEY or OPENROUTER_API_KEY, OPENROUTER_API_KEY
 
 Outputs:
@@ -81,6 +82,29 @@ Examples:
         "--no-mapping",
         action="store_true",
         help="Skip mapping stage (default: run mapping)",
+    )
+    parser.add_argument(
+        "--chunking",
+        action="store_true",
+        help="Enable chunked extraction regardless of document size.",
+    )
+    parser.add_argument(
+        "--chunk-size-tokens",
+        type=int,
+        default=None,
+        help="Chunk size in tokens (passed to extraction).",
+    )
+    parser.add_argument(
+        "--chunk-overlap-tokens",
+        type=int,
+        default=None,
+        help="Chunk overlap in tokens (passed to extraction).",
+    )
+    parser.add_argument(
+        "--chunk-auto-threshold-tokens",
+        type=int,
+        default=None,
+        help="Auto-chunk threshold in tokens (passed to extraction).",
     )
     return parser.parse_args()
 
@@ -162,17 +186,27 @@ def main() -> int:
             "[2/3] Extracting structured data from %s",
             markdown_path.relative_to(repo_root),
         )
-        code = run_cmd(
-            [
-                sys.executable,
-                "-m",
-                "extraction.scripts.extract",
-                "--markdown",
-                str(markdown_path),
-                "--output-dir",
-                str(extraction_output_dir),
-            ]
-        )
+        extract_cmd = [
+            sys.executable,
+            "-m",
+            "extraction.scripts.extract",
+            "--markdown",
+            str(markdown_path),
+            "--output-dir",
+            str(extraction_output_dir),
+        ]
+        # Optional CLI overrides; defaults come from llm_config.yml
+        if args.chunking:
+            extract_cmd.append("--chunking")
+        if args.chunk_size_tokens:
+            extract_cmd.extend(["--chunk-size-tokens", str(args.chunk_size_tokens)])
+        if args.chunk_overlap_tokens:
+            extract_cmd.extend(["--chunk-overlap-tokens", str(args.chunk_overlap_tokens)])
+        if args.chunk_auto_threshold_tokens:
+            extract_cmd.extend(
+                ["--chunk-auto-threshold-tokens", str(args.chunk_auto_threshold_tokens)]
+            )
+        code = run_cmd(extract_cmd)
         if code != 0:
             logger.error("Extraction failed for %s (exit %d).", markdown_path, code)
 

@@ -14,6 +14,7 @@ import logging
 from pathlib import Path
 from typing import Iterable
 import uuid
+from uuid import UUID, uuid5
 
 from mapping.utils.llm_utils import load_json_list as load_json_list_base
 
@@ -60,17 +61,48 @@ def write_json(path: Path, payload: list[dict]) -> None:
     path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
 
 
+def is_valid_uuid(value: object) -> bool:
+    """Return True for well-formed UUID strings."""
+    if not isinstance(value, str):
+        return False
+    try:
+        UUID(value)
+    except ValueError:
+        return False
+    return True
+
+
+def is_placeholder_uuid(value: object) -> bool:
+    """Treat zero-prefixed UUIDs as placeholders that should be replaced."""
+    if not isinstance(value, str):
+        return False
+    return value.strip().lower().startswith("00000000-0000-0000-0000-")
+
+
+def derive_city_id(source: dict) -> str:
+    """Derive a deterministic cityId from stable city attributes."""
+    payload = {
+        "cityName": source.get("cityName"),
+        "country": source.get("country"),
+        "locode": source.get("locode"),
+    }
+    seed = json.dumps(payload, sort_keys=True, ensure_ascii=False)
+    namespace = uuid5(UUID(int=0), "City")
+    return str(uuid5(namespace, seed))
+
+
 def build_city_record(source: dict | None) -> tuple[dict, str]:
     """
     Derive the canonical city record from the first extracted City entry.
 
     If no City is present, generate a placeholder with a new UUID so downstream mapping can proceed.
     """
-    if source and source.get("cityId"):
-        canonical_id = source["cityId"]
-        record = dict(source)
-    elif source:
-        canonical_id = str(uuid.uuid4())
+    if source:
+        source_id = source.get("cityId")
+        if source_id and is_valid_uuid(source_id) and not is_placeholder_uuid(source_id):
+            canonical_id = source_id
+        else:
+            canonical_id = derive_city_id(source)
         record = dict(source, cityId=canonical_id)
     else:
         canonical_id = str(uuid.uuid4())

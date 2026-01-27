@@ -1,6 +1,7 @@
 """Utilities for the extraction package."""
 
 from extraction.utils.config_utils import load_config, load_prompt, load_class_context, clean_debug_logs
+from extraction.utils.chunking import chunk_markdown, extract_tables, Chunk, TableInfo
 from extraction.utils.file_utils import load_markdown, load_existing, persist_instances, DEFAULT_OUTPUT_DIR
 from extraction.utils.data_utils import (
     escape_braces,
@@ -16,6 +17,7 @@ from extraction.utils.data_utils import (
 )
 from extraction.utils.logging_utils import truncate, log_response_preview, log_full_response
 from extraction.utils.provider_utils import select_provider, apply_default_provider
+from extraction.utils.table_context import load_table_context, write_table_context, parse_table_signature
 
 __all__ = [
     # config
@@ -23,6 +25,11 @@ __all__ = [
     "load_prompt",
     "load_class_context",
     "clean_debug_logs",
+    # chunking
+    "chunk_markdown",
+    "extract_tables",
+    "Chunk",
+    "TableInfo",
     # file utils
     "load_markdown",
     "load_existing",
@@ -46,4 +53,8 @@ __all__ = [
     # provider handling
     "select_provider",
     "apply_default_provider",
+    # table context
+    "load_table_context",
+    "write_table_context",
+    "parse_table_signature",
 ]

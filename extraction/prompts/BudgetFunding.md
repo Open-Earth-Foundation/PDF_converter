@@ -5,17 +5,31 @@ Context: Budget funding sources and amounts allocated to climate actions in the 
 - `budgetFundingId`: UUID identifier (auto-generated if missing)
 - `budgetId`: Budget UUID reference (optional, auto-linked if context available)
 - `fundingSourceId`: Funding source UUID reference (optional, auto-linked if context available)
-- `amount`: **VERIFIED FIELD** - Funding amount as integer (REQUIRED). Output as `{"value": "5000000", "quote": "5 million euros", "confidence": 0.95}`
+- **VERIFIED FIELDS** (each requires three fields: value, _quote, _confidence):
+  - `amount`: Funding amount as integer (REQUIRED)
+  - `amount_quote`: Verbatim quote from document (REQUIRED) - preserve format as stated
+  - `amount_confidence`: Confidence score 0.0-1.0 (REQUIRED)
 - `currency`: Currency code (e.g., "EUR", "USD") (REQUIRED)
 - `notes`: Catch-all field for any valuable insights (e.g., funding conditions, timeline, allocation rationale) - USE THIS FIELD for anything meaningful not covered by other fields
 
 **Verified Field Rules**:
 
-For `amount`:
-- Must be output as a VerifiedField object with `value`, `quote`, and `confidence` properties
-- The `quote` must be verbatim text from the document (e.g., "5 million euros", "€3,500,000", "approximately 2 million")
-- The `value` is the parsed numeric amount (exact parsing is internal; the quote shows the source)
+For verified field (`amount`):
+- The verified field requires THREE fields in your output: the value, the `_quote`, and the `_confidence`
+- The `_quote` must be verbatim text from the document (e.g., "5 million euros", "€3,500,000", "approximately 2 million")
+- The `_confidence` must be a number between 0.0 and 1.0
+- The `amount` value is the parsed numeric amount
 - Set confidence based on clarity of the amount
+
+**Example**:
+```json
+{
+  "amount": "5000000",
+  "amount_quote": "5 million euros",
+  "amount_confidence": 0.95,
+  "currency": "EUR"
+}
+```
 
 **Rules**:
 

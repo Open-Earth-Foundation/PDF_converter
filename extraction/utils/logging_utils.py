@@ -16,6 +16,7 @@ LOGGER = logging.getLogger(__name__)
 
 LOG_SNIPPET_LEN = 320
 DEBUG_LOG_DIR = Path(__file__).resolve().parent.parent / "debug_logs"
+FULL_RESPONSE_LOGGED: set[str] = set()
 
 
 def truncate(text: str, limit: int = LOG_SNIPPET_LEN) -> str:
@@ -23,6 +24,33 @@ def truncate(text: str, limit: int = LOG_SNIPPET_LEN) -> str:
     if len(text) <= limit:
         return text
     return text[: limit - 3] + "..."
+
+
+def _serialize_response(response: object) -> object:
+    """Best-effort serialization of the raw response object."""
+    if hasattr(response, "model_dump"):
+        try:
+            return response.model_dump(mode="json")
+        except TypeError:
+            return response.model_dump()
+        except Exception:
+            pass
+    if hasattr(response, "dict"):
+        try:
+            return response.dict()
+        except Exception:
+            pass
+    if hasattr(response, "json"):
+        try:
+            return json.loads(response.json())
+        except Exception:
+            pass
+    if hasattr(response, "__dict__"):
+        try:
+            return vars(response)
+        except Exception:
+            pass
+    return {"repr": repr(response)}
 
 
 def log_response_preview(model_name: str, assistant_messages: list[str], tool_calls: list[ResponseFunctionToolCall]) -> None:
@@ -50,6 +78,15 @@ def log_full_response(class_name: str, response: object, round_idx: int, config:
         "status": getattr(response, "status", None),
         "output_items": [],
     }
+    include_raw_once = True
+    include_raw_all = False
+    if config is not None:
+        include_raw_once = config.get("debug_logs_full_response_once", True)
+        include_raw_all = config.get("debug_logs_full_response", False)
+
+    if include_raw_all or (include_raw_once and class_name not in FULL_RESPONSE_LOGGED):
+        FULL_RESPONSE_LOGGED.add(class_name)
+        debug_info["raw_response"] = _serialize_response(response)
 
     # Responses API
     if hasattr(response, "output"):
@@ -111,7 +148,10 @@ def log_full_response(class_name: str, response: object, round_idx: int, config:
         debug_info["output_length"] = 0
 
     try:
-        log_file.write_text(json.dumps(debug_info, indent=2, ensure_ascii=False), encoding="utf-8")
+        log_file.write_text(
+            json.dumps(debug_info, indent=2, ensure_ascii=False, default=str),
+            encoding="utf-8",
+        )
     except (TypeError, ValueError) as exc:
         LOGGER.error(
             "Failed to serialize debug_info for %s (round %d): %s\nProblematic data: %r",

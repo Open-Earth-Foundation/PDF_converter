@@ -6,11 +6,31 @@ import re
 import logging
 import inspect
 from typing import Any, Dict, Type, get_args, get_origin
+from uuid import UUID
 from pydantic import BaseModel
 
 from extraction.utils.verified_field import VerifiedField
 
 LOGGER = logging.getLogger(__name__)
+
+
+def _convert_uuid_to_str(value: Any) -> Any:
+    """
+    Recursively convert UUID objects to strings for JSON serialization.
+
+    Args:
+        value: The value to convert.
+
+    Returns:
+        The value with all UUID objects converted to strings.
+    """
+    if isinstance(value, UUID):
+        return str(value)
+    elif isinstance(value, dict):
+        return {k: _convert_uuid_to_str(v) for k, v in value.items()}
+    elif isinstance(value, (list, tuple)):
+        return [_convert_uuid_to_str(v) for v in value]
+    return value
 
 
 def normalize_text_for_match(text: str) -> str:
@@ -71,61 +91,11 @@ def validate_quote_in_source(quote: str, source_text: str) -> bool:
     return normalized_quote in normalized_source
 
 
-def is_verified_field(annotation: Any) -> bool:
-    """
-    Check if a type annotation is or contains VerifiedField.
-    
-    Handles:
-    - VerifiedField[T]
-    - Optional[VerifiedField[T]] (i.e., VerifiedField[T] | None)
-
-    Args:
-        annotation: The type annotation to check.
-
-    Returns:
-        True if the annotation is VerifiedField[T] or Optional[VerifiedField[T]], False otherwise.
-    """
-    import types
-    from typing import Union
-    
-    origin = get_origin(annotation)
-    
-    # Direct VerifiedField[T]
-    if origin is VerifiedField or annotation is VerifiedField:
-        return True
-
-    # Pydantic generics produce specialized subclasses; accept subclasses too.
-    if inspect.isclass(annotation):
-        try:
-            if issubclass(annotation, VerifiedField):
-                return True
-        except TypeError:
-            pass
-    
-    # Optional[VerifiedField[T]] = Union[VerifiedField[T], None]
-    union_types = (Union,)
-    if getattr(types, "UnionType", None) is not None:
-        union_types = (Union, types.UnionType)
-
-    if origin in union_types:
-        args = get_args(annotation)
-        for arg in args:
-            if get_origin(arg) is VerifiedField or arg is VerifiedField:
-                return True
-            if inspect.isclass(arg):
-                try:
-                    if issubclass(arg, VerifiedField):
-                        return True
-                except TypeError:
-                    pass
-        return False
-    
-    return False
-
-
 def get_verified_fields(model_cls: Type[BaseModel]) -> Dict[str, str]:
     """
-    Get all verified fields from a model class.
+    Get all verified fields from a model class (flat structure).
+
+    Detects fields that have corresponding _quote and _confidence fields.
 
     Args:
         model_cls: The Pydantic model class.
@@ -134,10 +104,21 @@ def get_verified_fields(model_cls: Type[BaseModel]) -> Dict[str, str]:
         Dict mapping field name (Python name) to alias name.
     """
     verified = {}
+    field_names = set(model_cls.model_fields.keys())
+
     for field_name, field_info in model_cls.model_fields.items():
-        if is_verified_field(field_info.annotation):
+        # Skip if this is a quote or confidence field itself
+        if field_name.endswith("_quote") or field_name.endswith("_confidence"):
+            continue
+
+        # Check if this field has corresponding _quote and _confidence fields
+        quote_field = f"{field_name}_quote"
+        confidence_field = f"{field_name}_confidence"
+
+        if quote_field in field_names and confidence_field in field_names:
             alias = field_info.alias or field_name
             verified[field_name] = alias
+
     return verified
 
 
@@ -149,9 +130,9 @@ def map_verified_to_db(
     """
     Map a verified object to database format with proof in misc field.
 
-    Converts VerifiedField objects to scalar values, extracts proof (quote + confidence),
-    and stores proof in misc field as `{field_name}_proof` entries.
-    
+    Extracts values and their corresponding _quote and _confidence fields,
+    validates quotes against source text, and stores proof in misc field.
+
     Values are coerced to their target database types (date, Decimal, int, str).
 
     Args:
@@ -164,8 +145,11 @@ def map_verified_to_db(
         - output_dict: DB-compatible dict with scalar values and misc proofs.
         - validation_errors: Dict of field names to error messages (empty if all valid).
     """
-    from extraction.utils.verified_coercion import get_target_type_for_field, coerce_verified_value
-    
+    from extraction.utils.verified_coercion import (
+        get_target_type_for_field,
+        coerce_verified_value,
+    )
+
     output_dict: Dict[str, Any] = {}
     proofs: Dict[str, Dict[str, Any]] = {}
     errors: Dict[str, str] = {}
@@ -173,62 +157,93 @@ def map_verified_to_db(
     # Resolve model name for field mapping
     model_name = db_model_cls.__name__ if db_model_cls else type(verified_obj).__name__
     if model_name.startswith("Verified"):
-        model_name = model_name[len("Verified"):]
+        model_name = model_name[len("Verified") :]
 
     # Get verified fields
     verified_fields = get_verified_fields(type(verified_obj))
 
     # Process all fields from verified object
     for field_name, field_info in type(verified_obj).model_fields.items():
+        # Skip quote and confidence fields (they're processed with their base field)
+        if field_name.endswith("_quote") or field_name.endswith("_confidence"):
+            continue
+
         alias = field_info.alias or field_name
         value = getattr(verified_obj, field_name, None)
 
         # Check if this is a verified field
         if field_name in verified_fields:
-            # Value should be a VerifiedField instance
-            if isinstance(value, VerifiedField):
-                # Validate quote in source
-                if not validate_quote_in_source(value.quote, source_text):
-                    errors[field_name] = (
-                        f"Quote not found in source: '{value.quote}' for field {alias}"
-                    )
-                    LOGGER.warning(
-                        "Quote validation failed for %s: '%s'",
-                        alias,
-                        value.quote,
-                    )
-                    continue
+            # Get the quote and confidence
+            quote_field = f"{field_name}_quote"
+            confidence_field = f"{field_name}_confidence"
 
-                # Get target type for this field and coerce the value
-                target_type = get_target_type_for_field(model_name, alias)
-                try:
-                    if target_type:
-                        coerced_value = coerce_verified_value(value.value, alias, target_type)
-                    else:
-                        # No type coercion needed, use as-is
-                        coerced_value = value.value
-                    
-                    output_dict[alias] = coerced_value
-                except ValueError as e:
-                    errors[field_name] = f"Value coercion failed for {alias}: {e}"
-                    LOGGER.warning(
-                        "Value coercion failed for %s: %s",
-                        alias,
-                        e,
-                    )
-                    continue
+            quote = getattr(verified_obj, quote_field, None)
+            confidence = getattr(verified_obj, confidence_field, None)
 
-                # Store proof in misc
-                proofs[f"{alias}_proof"] = {
-                    "quote": value.quote,
-                    "confidence": value.confidence,
-                }
-            elif value is not None:
-                errors[field_name] = f"Expected VerifiedField for {alias}, got {type(value)}"
+            # If value is None and we don't have quote/confidence, skip
+            if value is None and (quote is None or confidence is None):
+                continue
+
+            # Validate quote is present
+            if not quote or not isinstance(quote, str) or not quote.strip():
+                errors[field_name] = (
+                    f"Missing or empty quote for verified field {alias}"
+                )
+                LOGGER.warning("Missing quote for verified field %s", alias)
+                continue
+
+            # Validate confidence is present and in range
+            if (
+                confidence is None
+                or not isinstance(confidence, (int, float))
+                or not (0.0 <= confidence <= 1.0)
+            ):
+                errors[field_name] = (
+                    f"Invalid confidence for field {alias}: {confidence}"
+                )
+                LOGGER.warning("Invalid confidence for field %s: %s", alias, confidence)
+                continue
+
+            # Validate quote in source
+            if not validate_quote_in_source(quote, source_text):
+                errors[field_name] = (
+                    f"Quote not found in source: '{quote}' for field {alias}"
+                )
+                LOGGER.warning(
+                    "Quote validation failed for %s: '%s'",
+                    alias,
+                    quote,
+                )
+                continue
+
+            # Get target type for this field and coerce the value
+            target_type = get_target_type_for_field(model_name, alias)
+            try:
+                if target_type:
+                    coerced_value = coerce_verified_value(value, alias, target_type)
+                else:
+                    # No type coercion needed, use as-is
+                    coerced_value = value
+
+                output_dict[alias] = coerced_value
+            except ValueError as e:
+                errors[field_name] = f"Value coercion failed for {alias}: {e}"
+                LOGGER.warning(
+                    "Value coercion failed for %s: %s",
+                    alias,
+                    e,
+                )
+                continue
+
+            # Store proof in misc
+            proofs[f"{alias}_proof"] = {
+                "quote": quote,
+                "confidence": confidence,
+            }
         else:
-            # Regular field - copy as-is
+            # Regular field - copy as-is, converting UUIDs to strings
             if value is not None:
-                output_dict[alias] = value
+                output_dict[alias] = _convert_uuid_to_str(value)
 
     # Merge proofs into misc
     existing_misc = output_dict.get("misc", None)
@@ -244,5 +259,8 @@ def map_verified_to_db(
     # Set misc field if there are proofs
     if proofs:
         output_dict["misc"] = existing_misc
+
+    # Convert any remaining UUIDs to strings in the final dict
+    output_dict = _convert_uuid_to_str(output_dict)
 
     return output_dict, errors
