@@ -90,6 +90,26 @@ MISTRAL_API_KEY=sk-...
 OPENROUTER_API_KEY=sk-...
 ```
 
+## Docker (Database)
+
+This repo ships a Postgres service via `docker-compose.yml` for local DB testing.
+
+```bash
+docker compose up -d
+```
+
+The database credentials are defined in `docker-compose.yml`. Configure the app with:
+
+```bash
+DATABASE_URL=postgresql://pdf_user:pdf_pass@localhost:5432/pdf_converter
+```
+
+## Tests
+
+```bash
+pytest
+```
+
 ---
 
 ## Configuration
