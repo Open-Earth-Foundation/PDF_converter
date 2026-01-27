@@ -1,108 +1,77 @@
-# DB Load Implementation Plan
+# Implementation Plan: Large-Document Chunked Extraction
 
-## Why the schema mismatch is an issue
-- `database/schemas.py` is used for validation, so any field marked required there will fail validation even if the DB allows nulls.
-- Example: `FundingSource.description` and `FundingSource.notes` are required in schemas but nullable in the DB model, so valid DB rows are rejected before insert.
-- This creates false negatives, blocks loading, and hides real data quality issues.
+Goal: Process documents larger than the model context window (e.g., Aachen ~700 pages) by auto-chunking Markdown above 300k tokens into ~200k-token windows with 10k overlap, using tiktoken counting and only paragraph/sentence boundaries (tables kept intact even if we overflow).
 
-## Goals
-- Load `mapping/workflow_output/step3_llm` outputs into the DB.
-- Validate with `database/schemas.py` first, with clear and actionable error reporting.
-- Provide a permissive mode for troubleshooting or emergency loads.
+## Ticket 1: Baseline sizing and chunking spec
+- Goal: Confirm real token counts and define chunking rules for large PDFs.
+- Tasks:
+  - Measure token count for the Aachen combined_markdown.md and record size/structure notes (headings, tables, section breaks).
+  - Define chunk size defaults (200k tokens, 10k overlap) and auto-chunk threshold (300k tokens) in terms of tiktoken counts.
+  - Define boundaries: only end-of-paragraph or end-of-sentence; allow overflow to reach the next valid boundary.
+  - Define table handling: keep tables intact even if that overflows the chunk size.
+- Acceptance criteria:
+  - A short spec section in this file describing chunk sizes, overlap, auto-threshold, boundary rules, and table handling.
 
-## Plan (validate-first, with permissive fallback)
+## Ticket 2: Token-based chunker utility
+- Goal: Add a reusable chunking helper that splits Markdown by tokens with overlap.
+- Tasks:
+  - Create `extraction/utils/chunking.py` with a `chunk_markdown()` function using tiktoken for token counting.
+  - Return chunk objects with index, token counts, and start/end offsets or line numbers.
+  - Split only on end of paragraph or end of sentence; allow overflow to reach a valid boundary.
+  - Detect Markdown tables and keep each table intact even if the chunk exceeds the target size.
+- Acceptance criteria:
+  - Unit tests cover chunk size limits, overlap correctness, and boundary preference.
 
-### 1) Verify schema alignment with DB models
-- Schema alignment is confirmed as of 2026-01-23: `database/schemas.py` already matches nullability and types in `database/models/*`
-  - `FundingSource.description`, `FundingSource.notes`: already optional
-  - `Stakeholder.description`, `Indicator.description`, `Initiative.description`: already optional
-  - `CityBudget.year`: both schema and DB use `int` (no mismatch)
-- If any drift is detected during development, update schemas first before proceeding
-- Consider adding unit tests to prevent future schema drift (e.g., auto-check in CI)
+## Ticket 3: Config and CLI support for chunking
+- Goal: Make chunking configurable and easy to enable.
+- Tasks:
+  - Add `extraction.chunking` settings to `llm_config.yml` (enabled, auto_threshold_tokens=300000, chunk_size_tokens=200000, chunk_overlap_tokens=10000, boundary_mode=paragraph_or_sentence, keep_tables_intact=true).
+  - Add CLI overrides to `extraction.scripts.extract` (e.g., `--chunk-size-tokens`, `--chunk-overlap-tokens`, `--chunking`).
+  - Extend `extraction/utils/config_utils.py` to load defaults cleanly.
+- Acceptance criteria:
+  - Chunking can be enabled via config or CLI without code changes.
 
-Result: validation failures reflect true data problems, not schema drift.
+## Ticket 4: Chunked extraction flow in `extraction/extract.py`
+- Goal: Run extraction across chunks when a document exceeds token limits.
+- Tasks:
+  - If token count exceeds `auto_threshold_tokens` or chunking is enabled, split Markdown into chunks and process sequentially.
+  - Inject a chunk header in the prompt (chunk index, total chunks, overlap note, heading path) to preserve context.
+  - Include a compact summary of previously extracted instances for the same table (only from completed chunks/ranks) in the chunk prompt to reduce duplicates.
+- Acceptance criteria:
+  - Large documents no longer fail with "File too large" and extraction completes per chunk.
 
-### 2) Create a DB loader script (validation-first)
-Add `app/modules/db_insert/scripts/load_mapped_data.py` (and ensure the module utilities live under `app/modules/db_insert/utils/`).
+## Ticket 5: Dedup and provenance for overlapping chunks
+- Goal: Avoid duplicate records from overlap and retain traceability.
+- Tasks:
+  - Add `source_notes` (chunk id + heading path or offset) into tool calls for each record.
+  - Track table identifiers (heading path + table index or header hash) so prior extractions from the same table can be reused in prompts.
+  - Use only same-table extractions from completed chunks/ranks; do not share cross-table context.
+  - Add a secondary dedup pass based on primary-key fields and normalized content.
+  - Optionally merge near-duplicates created by overlap.
+- Acceptance criteria:
+  - Overlap does not materially inflate record counts for a test document.
 
-Script requirements:
-- Top-level docstring (per AGENTS rules).
-- `argparse` inputs:
-  - `--input-dir` (default: `mapping/workflow_output/step3_llm`)
-  - `--mode` (`validate` | `permissive`, default `validate`)
-  - `--report-path` (optional, default to timestamped report under `output/db_load_reports/`)
-  - `--dry-run` (optional, default `False`): validation only, no DB inserts. When False, inserts are performed.
-  - `--on-error` (`stop` | `continue`, default `stop`)
-- Use `DATABASE_URL` (or `DB_URL`) from env (via `database/config.py`).
-- Use `database/session.py` for sessions.
-- Use `app.utils.logging_config.setup_logger()` for logging.
+## Ticket 6: Resume and failure isolation
+- Goal: Make chunked runs resumable and robust while coordinating parallel workers.
+- Tasks:
+  - Track per-chunk per-class completion in a lightweight shared state so re-runs can skip completed work.
+  - Define processing order for parallel runs (chunk index rank) and only share same-table context from completed ranks.
+  - Continue processing remaining chunks if one chunk fails; log failures clearly without adding verbose logging.
+- Acceptance criteria:
+  - Re-running with `--resume` skips completed chunks and continues where it left off.
 
-### 3) Validation flow (mode=validate)
-For each table:
-- Load JSON list and normalize fields where needed:
-  - Convert camelCase JSON keys to match schema aliases
-  - Trim whitespace from string fields
-  - Ensure numeric types (int, Decimal) are properly typed
-  - Convert date strings to datetime/date objects where needed
-  - Remove any extra fields not in the schema (or error in validate mode)
-- Validate each record with the matching Pydantic model in `database/schemas.py`.
-- Collect structured errors:
-  - table name, record index, primary key (if any), missing fields, type errors
-- If any validation errors:
-  - Write report and fail fast by default (`--on-error stop`).
+## Ticket 7: Pipeline and docs updates
+- Goal: Expose chunking in user-facing workflows.
+- Tasks:
+  - Update `README.md` and `extraction/README.md` with chunking usage and examples.
+  - Update `run_pipeline.py` to auto-enable chunking for large Markdown or pass through CLI flags.
+- Acceptance criteria:
+  - Docs include a worked example for a large file (Aachen) and the new flags are documented.
 
-### 4) Insert flow (mode=validate or permissive)
-Insert in FK-safe order:
-1. City
-2. Sector
-3. Indicator
-4. CityAnnualStats
-5. EmissionRecord
-6. CityBudget
-7. FundingSource
-8. BudgetFunding
-9. Initiative
-10. Stakeholder
-11. InitiativeStakeholder
-12. InitiativeIndicator
-13. CityTarget
-14. IndicatorValue
-15. ClimateCityContract
-16. TefCategory
-17. InitiativeTef
-
-**Transaction strategy:**
-- Use per-table transactions by default (allows partial success and easier debugging)
-- Add `--atomic` flag option for all-or-nothing behavior if needed later
-- Log transaction boundaries for debugging (table start, commit/rollback, record counts)
-
-**Duplicate handling:**
-- Phase 1 (initial implementation): Insert-only, log `IntegrityError` as failures per record
-- Phase 2 (if needed): Add `--on-conflict` option (`error` | `skip` | `update`)
-
-Notes:
-- Empty tables should be skipped with an info log.
-- Add a follow-up option for upsert if needed.
-
-### 5) Error reporting
-Emit a report file (JSON or Markdown) with:
-- Per-table counts: loaded, validated, inserted, failed.
-- Missing field summary (by field name).
-- First N row-level errors for quick triage.
-
-### 6) Permissive mode (mode=permissive)
-- Skip Pydantic validation.
-- Minimal normalization only (drop unknown keys, keep required types where possible).
-- Attempt inserts and log DB errors.
-- Still emit the same report format.
-
-### 7) Manual run checklist
-- `DATABASE_URL` set in environment
-- Mapping outputs are up to date (step3)
-- Run validation-only: `python -m app.modules.db_insert.scripts.load_mapped_data --dry-run`
-- Run with inserts: `python -m app.modules.db_insert.scripts.load_mapped_data`
-- Review report at `output/db_load_reports/` for detailed results
-
-## Open questions
-
-- Should we add an upsert mode (on conflict do nothing/update)? (Deferred to Phase 2)
+## Ticket 8: Validation on Aachen document
+- Goal: Verify end-to-end behavior on the 700-page Aachen PDF.
+- Tasks:
+  - Run chunked extraction on the Aachen markdown and review outputs for missing sections and duplicates.
+  - Record basic metrics: total tokens, number of chunks, runtime, record counts per class.
+- Acceptance criteria:
+  - Aachen extraction completes without context errors, with sensible record counts and no obvious gaps.

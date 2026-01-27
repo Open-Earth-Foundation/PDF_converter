@@ -109,7 +109,7 @@ class Initiative(BaseDBModel):
     description: str | None = Field(default=None, alias="description")
     start_year: int | None = Field(default=None, alias="startYear")
     end_year: int | None = Field(default=None, alias="endYear")
-    total_estimated_cost: int | None = Field(default=None, alias="totalEstimatedCost")
+    total_estimated_cost: int | None = Field(default=None, alias="totalEstimatedCost")  # BIGINT
     currency: str | None = Field(
         default=None, alias="currency"
     )  # TODO: enum when vocabulary set

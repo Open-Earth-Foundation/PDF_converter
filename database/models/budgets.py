@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID, uuid4
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import BigInteger, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.dialects.postgresql import JSONB, UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -63,7 +63,7 @@ class BudgetFunding(Base):
         ForeignKey("FundingSource.fundingSourceId"),
         nullable=True,
     )
-    amount: Mapped[int] = mapped_column("amount", Integer, nullable=False)
+    amount: Mapped[int] = mapped_column("amount", BigInteger, nullable=False)
     currency: Mapped[str] = mapped_column("currency", String, nullable=False)
     notes: Mapped[str | None] = mapped_column("notes", Text, nullable=True)
     misc: Mapped[dict[str, Any] | None] = mapped_column(

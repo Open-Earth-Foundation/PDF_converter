@@ -7,7 +7,8 @@ Inputs:
 - --report-path: optional report output path (JSON)
 - --dry-run: validate only, skip inserts
 - --on-error: stop or continue
-- --atomic: single transaction across all tables
+- --atomic: single transaction across all tables (all-or-nothing for all cities)
+- --per-city: atomic per city (each city's data is all-or-nothing, but cities load independently)
 - Env: DATABASE_URL or DB_URL (loaded from .env)
 
 Outputs:
@@ -17,6 +18,7 @@ Outputs:
 
 Usage (from project root):
 - python -m app.modules.db_insert.scripts.load_mapped_data --dry-run
+- python -m app.modules.db_insert.scripts.load_mapped_data --per-city
 - python -m app.modules.db_insert.scripts.load_mapped_data --mode permissive --on-error continue
 """
 
@@ -76,6 +78,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Single transaction across all tables.",
     )
+    parser.add_argument(
+        "--per-city",
+        action="store_true",
+        help="Atomic per city (each city is all-or-nothing, but cities load independently).",
+    )
     return parser.parse_args()
 
 
@@ -84,10 +91,11 @@ def main() -> int:
     args = parse_args()
     report_path = ensure_report_path(args.report_path)
     LOGGER.info(
-        "Starting DB load: mode=%s dry_run=%s atomic=%s on_error=%s input_dir=%s",
+        "Starting DB load: mode=%s dry_run=%s atomic=%s per_city=%s on_error=%s input_dir=%s",
         args.mode,
         args.dry_run,
         args.atomic,
+        args.per_city,
         args.on_error,
         args.input_dir,
     )
@@ -98,6 +106,7 @@ def main() -> int:
         dry_run=args.dry_run,
         on_error=args.on_error,
         atomic=args.atomic,
+        per_city=args.per_city,
     )
 
 

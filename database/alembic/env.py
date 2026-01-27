@@ -4,12 +4,16 @@ import os
 import logging
 from logging.config import fileConfig
 
+from dotenv import load_dotenv
 from alembic import context
 from sqlalchemy import engine_from_config, pool
 from sqlalchemy.engine import make_url
 
 from database.base import Base
 import database.models  # noqa: F401
+
+# Load .env automatically (searches current dir and parents)
+load_dotenv()
 
 config = context.config
 

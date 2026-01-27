@@ -480,6 +480,7 @@ def run_load(
     dry_run: bool,
     on_error: str,
     atomic: bool,
+    per_city: bool = False,
 ) -> int:
     if not input_dir.exists():
         LOGGER.error("Input directory does not exist: %s", input_dir)
@@ -502,10 +503,31 @@ def run_load(
 
     validation_failed = False
 
-    def handle_tables(session: Session | None = None) -> None:
+    def get_city_ids_from_records(records_by_table: dict[str, list[dict[str, Any]]]) -> set[str]:
+        """Extract all unique city IDs from records that have a cityId field."""
+        city_ids: set[str] = set()
+        for table_records in records_by_table.values():
+            for record in table_records:
+                if "cityId" in record and record["cityId"]:
+                    city_ids.add(record["cityId"])
+        return city_ids
+
+    def filter_records_by_city(
+        records_by_table: dict[str, list[dict[str, Any]]], city_id: str
+    ) -> dict[str, list[dict[str, Any]]]:
+        """Filter records to only include those for a specific city."""
+        filtered = {}
+        for table_name, records in records_by_table.items():
+            filtered[table_name] = [
+                r for r in records if r.get("cityId") == city_id or "cityId" not in r
+            ]
+        return filtered
+
+    def handle_tables(session: Session | None = None, filtered_records: dict[str, list[dict[str, Any]]] | None = None) -> None:
         nonlocal validation_failed
+        records_to_use = filtered_records if filtered_records is not None else records_by_table
         for spec in TABLE_SPECS:
-            raw_records = records_by_table.get(spec.name, [])
+            raw_records = records_to_use.get(spec.name, [])
             if not raw_records:
                 LOGGER.info("No records for %s", spec.name)
                 continue
@@ -538,7 +560,24 @@ def run_load(
             settings = DBSettings.from_env()
             engine = create_db_engine(settings=settings)
             session_factory = create_session_factory(engine)
-            if atomic:
+            if per_city:
+                # Per-city atomicity: each city's data is all-or-nothing
+                city_ids = get_city_ids_from_records(records_by_table)
+                LOGGER.info("Loading %d cities with per-city atomicity", len(city_ids))
+                for city_id in sorted(city_ids):
+                    filtered_records = filter_records_by_city(records_by_table, city_id)
+                    with session_factory() as session:
+                        try:
+                            LOGGER.info("Starting atomic transaction for city %s", city_id)
+                            with session.begin():
+                                handle_tables(session, filtered_records)
+                            LOGGER.info("Committed transaction for city %s", city_id)
+                        except StopProcessing as exc:
+                            LOGGER.warning("Rolling back transaction for city %s: %s", city_id, exc)
+                            validation_failed = True
+                            if on_error == "stop":
+                                break
+            elif atomic:
                 with session_factory() as session:
                     txn = session.begin()
                     try:
