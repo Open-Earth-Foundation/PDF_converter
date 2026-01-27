@@ -24,6 +24,15 @@ DEFAULT_LLM_CONFIG: Dict[str, Dict[str, Any]] = {
         "clean_debug_logs_on_start": True,
         "debug_logs_full_response_once": True,
         "debug_logs_full_response": False,
+        "chunking": {
+            "enabled": False,
+            "auto_threshold_tokens": 300000,
+            "chunk_size_tokens": 200000,
+            "chunk_overlap_tokens": 10000,
+            "boundary_mode": "paragraph_or_sentence",
+            "keep_tables_intact": True,
+            "table_context_max_items": 0,
+        },
     },
     "mapping": {"model": "google/gemini-3-flash-preview", "temperature": 0.0},
 }

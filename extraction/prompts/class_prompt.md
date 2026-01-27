@@ -20,6 +20,12 @@ Previously extracted {class_name} instances (avoid duplicates):
 {existing_summary}
 ```
 
+Table context (same-table only; avoid duplicates):
+
+```
+{table_context}
+```
+
 **EXTRACTION INSTRUCTIONS**:
 
 1. Scan the entire Markdown for all mentions matching {class_name} (tables, lists, paragraphs, inline mentions).

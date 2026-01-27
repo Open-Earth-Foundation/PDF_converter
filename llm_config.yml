@@ -12,6 +12,14 @@ extraction:
   clean_debug_logs_on_start: true
   debug_logs_full_response_once: true
   debug_logs_full_response: true
+  chunking:
+    enabled: false
+    auto_threshold_tokens: 300000
+    chunk_size_tokens: 200000
+    chunk_overlap_tokens: 10000
+    boundary_mode: paragraph_or_sentence
+    keep_tables_intact: true
+    table_context_max_items: 0 # 0 = include all same-table rows; reduce to limit prompt size
 
 mapping:
   model:  openai/gpt-5-mini

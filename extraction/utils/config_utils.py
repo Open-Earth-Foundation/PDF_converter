@@ -19,6 +19,15 @@ DEFAULT_EXTRACTION_CONFIG = {
     "clean_debug_logs_on_start": True,
     "debug_logs_full_response_once": True,
     "debug_logs_full_response": False,
+    "chunking": {
+        "enabled": False,
+        "auto_threshold_tokens": 300000,
+        "chunk_size_tokens": 200000,
+        "chunk_overlap_tokens": 10000,
+        "boundary_mode": "paragraph_or_sentence",
+        "keep_tables_intact": True,
+        "table_context_max_items": 0,
+    },
 }
 
 
@@ -37,7 +46,15 @@ def load_config() -> dict:
     if not isinstance(extraction_config, dict):
         LOGGER.warning("Extraction config is not a mapping; using defaults.")
         extraction_config = {}
-    return {**DEFAULT_EXTRACTION_CONFIG, **extraction_config}
+    merged = {**DEFAULT_EXTRACTION_CONFIG, **extraction_config}
+    chunking = merged.get("chunking", {})
+    if not isinstance(chunking, dict):
+        chunking = {}
+    merged["chunking"] = {
+        **DEFAULT_EXTRACTION_CONFIG["chunking"],
+        **chunking,
+    }
+    return merged
 
 
 def load_class_context(class_name: str) -> str:

@@ -10,6 +10,7 @@ Flags:
 - --model/--max-rounds/--class-names/--log-level: overrides for runtime settings
 - --overwrite: clear existing JSON output before extraction
 - --extra-guidance: append extra guidance to class prompts
+- --chunking/--chunk-size-tokens/--chunk-overlap-tokens/--chunk-auto-threshold-tokens: chunking controls
 """
 
 from __future__ import annotations
@@ -19,8 +20,9 @@ import importlib
 import json
 import logging
 import os
+import shutil
 from pathlib import Path
-from typing import Type
+from typing import Sequence, Type
 
 from dotenv import load_dotenv
 from openai import OpenAI, APIStatusError
@@ -29,6 +31,7 @@ from pydantic import BaseModel
 
 from utils import load_llm_config
 from extraction.utils import (
+    chunk_markdown,
     load_config,
     load_prompt,
     load_class_context,
@@ -38,13 +41,18 @@ from extraction.utils import (
     persist_instances,
     escape_braces,
     extract_model_classes,
-    to_json_ready,
     summarise_instances,
     parse_record_instances,
     truncate,
     log_full_response,
     select_provider,
     apply_default_provider,
+    load_table_context,
+    write_table_context,
+    parse_table_signature,
+    extract_tables,
+    Chunk,
+    TableInfo,
 )
 from extraction.tools import get_all_tools
 
@@ -52,6 +60,64 @@ LOGGER = logging.getLogger(__name__)
 
 # Load tool definitions from tools module
 TOOLS = get_all_tools()
+
+
+def _make_doc_id(markdown_path: Path) -> str:
+    """Derive a stable document id for chunk context storage."""
+    if markdown_path.parent and markdown_path.parent.name:
+        return markdown_path.parent.name
+    return markdown_path.stem
+
+
+def _format_table_context(
+    tables: Sequence[TableInfo],
+    table_items: dict[str, list[dict]],
+    *,
+    max_items: int,
+) -> str:
+    if max_items <= 0 or not tables or not table_items:
+        return "None."
+
+    lines: list[str] = []
+    for table in tables:
+        items = table_items.get(table.signature)
+        if not items:
+            continue
+        summary_limit = max_items if max_items > 0 else len(items)
+        lines.append(f"- table_signature={table.signature}")
+        lines.append(f"  heading: {table.heading_path or 'None'}")
+        lines.append(f"  header: {table.header}")
+        lines.append("  items:")
+        summary = summarise_instances(items, max_items=summary_limit)
+        lines.extend(_indent_text(summary, "    ").splitlines())
+
+    return "\n".join(lines) if lines else "None."
+
+
+def _indent_text(text: str, prefix: str) -> str:
+    return "\n".join(f"{prefix}{line}" for line in text.splitlines())
+
+
+def _merge_table_items(
+    target: dict[str, list[dict]],
+    signature: str,
+    items: Sequence[dict],
+) -> None:
+    existing = target.setdefault(signature, [])
+    seen = {json.dumps(entry, sort_keys=True, ensure_ascii=False) for entry in existing}
+    for item in items:
+        key = json.dumps(item, sort_keys=True, ensure_ascii=False)
+        if key in seen:
+            continue
+        seen.add(key)
+        existing.append(item)
+
+
+def _coerce_int(value: object, default: int) -> int:
+    try:
+        return int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return default
 
 
 def run_class_extraction(
@@ -66,6 +132,9 @@ def run_class_extraction(
     db_model_name: str,
     output_dir: Path,
     max_rounds: int,
+    table_context: str | None = None,
+    table_signatures: Sequence[str] | None = None,
+    table_context_collector: dict[str, list[dict]] | None = None,
     config: dict | None = None,
     overwrite: bool = False,
     extra_guidance: str | None = None,
@@ -74,6 +143,7 @@ def run_class_extraction(
     Run extraction for a single Pydantic model class using chat.completions with tools.
 
     Args mirror the CLI entry point.
+    table_context is an optional chunk-aware prompt section.
 
     Args:
         db_model_name: The database model name (for output file naming and context loading).
@@ -89,6 +159,7 @@ def run_class_extraction(
         for entry in stored_instances
     }
     base_extra_body = dict(extra_body or {})
+    table_signatures = list(table_signatures or [])
 
     class_context_raw = load_class_context(db_model_name)
     if extra_guidance:
@@ -105,11 +176,14 @@ def run_class_extraction(
         "required": full_schema.get("required", []),
     }
 
+    table_context_text = table_context or "None."
+
     user_prompt = user_template.format(
         class_name=model_cls.__name__,
         class_context=class_context,
         json_schema=escape_braces(json.dumps(compact_schema, indent=2)),
         existing_summary=escape_braces(summarise_instances(stored_instances)),
+        table_context=escape_braces(table_context_text),
         markdown=escape_braces(markdown_text),
     )
 
@@ -227,11 +301,20 @@ def run_class_extraction(
         for tc in tool_calls:
             name = tc.function.name
             args = tc.function.arguments or "{}"
+            source_notes = None
+            if table_context_collector is not None:
+                try:
+                    parsed = json.loads(args or "{}")
+                    if isinstance(parsed, dict):
+                        source_notes = parsed.get("source_notes")
+                except json.JSONDecodeError:
+                    source_notes = None
             fake_call = type(
                 "ToolCall", (), {"name": name, "arguments": args, "call_id": tc.id}
             )
 
             if name == "record_instances":
+                stored_before = len(stored_instances)
                 payload, added = parse_record_instances(
                     fake_call,
                     model_cls,
@@ -246,6 +329,22 @@ def run_class_extraction(
                         model_cls.__name__,
                         len(stored_instances),
                     )
+                if table_context_collector is not None:
+                    table_signature = parse_table_signature(source_notes)
+                    if (
+                        not table_signature
+                        and table_signatures
+                        and len(table_signatures) == 1
+                    ):
+                        table_signature = table_signatures[0]
+                    if table_signature and (
+                        not table_signatures or table_signature in table_signatures
+                    ):
+                        new_items = stored_instances[stored_before:]
+                        if new_items:
+                            _merge_table_items(
+                                table_context_collector, table_signature, new_items
+                            )
             elif name == "all_extracted":
                 extracted_complete = True
                 try:
@@ -338,6 +437,29 @@ def parse_args() -> argparse.Namespace:
         help="Append extra guidance to class prompts (useful for targeted re-runs).",
     )
     parser.add_argument(
+        "--chunking",
+        action="store_true",
+        help="Enable chunked extraction regardless of document size.",
+    )
+    parser.add_argument(
+        "--chunk-size-tokens",
+        type=int,
+        default=None,
+        help="Chunk size in tokens (overrides llm_config.yml).",
+    )
+    parser.add_argument(
+        "--chunk-overlap-tokens",
+        type=int,
+        default=None,
+        help="Chunk overlap in tokens (overrides llm_config.yml).",
+    )
+    parser.add_argument(
+        "--chunk-auto-threshold-tokens",
+        type=int,
+        default=None,
+        help="Auto-chunk threshold in tokens (overrides llm_config.yml).",
+    )
+    parser.add_argument(
         "--log-level",
         default=os.getenv("LOG_LEVEL", "INFO"),
         help="Logging level (DEBUG, INFO, WARNING, ERROR).",
@@ -361,6 +483,10 @@ def main() -> None:
 
     config = load_config()
     llm_cfg = load_llm_config().get("extraction", {})
+    chunk_cfg = config.get("chunking", {})
+    if not isinstance(chunk_cfg, dict):
+        LOGGER.warning("Chunking config is not a mapping; using defaults.")
+        chunk_cfg = {}
 
     # Clean debug logs at startup if configured
     clean_logs_on_start = config.get("clean_debug_logs_on_start", True)
@@ -384,6 +510,31 @@ def main() -> None:
 
     # Get token limit from config
     token_limit = config.get("token_limit", 900000)
+
+    boundary_mode = str(chunk_cfg.get("boundary_mode", "paragraph_or_sentence"))
+    if boundary_mode != "paragraph_or_sentence":
+        LOGGER.warning(
+            "Unsupported boundary_mode %s; using paragraph_or_sentence.", boundary_mode
+        )
+        boundary_mode = "paragraph_or_sentence"
+    chunk_size_tokens = _coerce_int(
+        args.chunk_size_tokens or chunk_cfg.get("chunk_size_tokens"),
+        200000,
+    )
+    chunk_overlap_tokens = _coerce_int(
+        args.chunk_overlap_tokens or chunk_cfg.get("chunk_overlap_tokens"),
+        10000,
+    )
+    auto_threshold_tokens = _coerce_int(
+        args.chunk_auto_threshold_tokens or chunk_cfg.get("auto_threshold_tokens"),
+        300000,
+    )
+    chunking_enabled = bool(args.chunking or chunk_cfg.get("enabled", False))
+    keep_tables_intact = bool(chunk_cfg.get("keep_tables_intact", True))
+    table_context_max_items = _coerce_int(
+        chunk_cfg.get("table_context_max_items", 5),
+        5,
+    )
 
     # Get max rounds from config or CLI override
     max_rounds = args.max_rounds or config.get("max_rounds", 12)
@@ -413,11 +564,39 @@ def main() -> None:
     # Check token count
     enc = tiktoken.get_encoding("cl100k_base")
     token_count = len(enc.encode(markdown_text))
-    if token_count > token_limit:
+    should_chunk = chunking_enabled or token_count > auto_threshold_tokens
+    if not should_chunk and token_count > token_limit:
         LOGGER.error("File too large: %d tokens (limit: %d)", token_count, token_limit)
         return
 
-    LOGGER.info("File size OK: %d tokens (limit: %d)", token_count, token_limit)
+    if should_chunk:
+        chunks = chunk_markdown(
+            markdown_text,
+            chunk_size_tokens=chunk_size_tokens,
+            chunk_overlap_tokens=chunk_overlap_tokens,
+            boundary_mode=boundary_mode,
+            keep_tables_intact=keep_tables_intact,
+        )
+        LOGGER.info(
+            "Chunking enabled: %d chunks (chunk_size=%d, overlap=%d, tokens=%d).",
+            len(chunks),
+            chunk_size_tokens,
+            chunk_overlap_tokens,
+            token_count,
+        )
+    else:
+        end_line = markdown_text.count("\n") + 1 if markdown_text else 1
+        chunks = [
+            Chunk(
+                index=0,
+                text=markdown_text,
+                token_count=token_count,
+                start_line=1,
+                end_line=end_line,
+                tables=extract_tables(markdown_text),
+            )
+        ]
+        LOGGER.info("File size OK: %d tokens (limit: %d)", token_count, token_limit)
 
     system_prompt = load_prompt("system.md")
     user_template = load_prompt("class_prompt.md")
@@ -447,6 +626,12 @@ def main() -> None:
     if not model_classes:
         LOGGER.warning("No classes to process.")
         return
+
+    doc_id = _make_doc_id(args.markdown)
+    table_context_root = output_dir / "table_context" / doc_id
+    if args.overwrite and table_context_root.exists():
+        shutil.rmtree(table_context_root, ignore_errors=True)
+        LOGGER.info("Cleared table context directory: %s", table_context_root)
 
     # Map database schema classes to verified schema classes for extraction
     verified_module = importlib.import_module("extraction.schemas_verified")
@@ -482,21 +667,47 @@ def main() -> None:
                 model_cls.__name__,
             )
 
-        run_class_extraction(
-            client=client,
-            model_name=model_name,
-            extra_body=extra_body,
-            system_prompt=system_prompt,
-            user_template=user_template,
-            markdown_text=markdown_text,
-            model_cls=extraction_model_cls,
-            db_model_name=model_cls.__name__,  # Use DB schema name for output file and context
-            output_dir=output_dir,
-            max_rounds=max_rounds,
-            config=config,
-            overwrite=args.overwrite,
-            extra_guidance=args.extra_guidance,
-        )
+        for chunk in chunks:
+            table_signatures = [table.signature for table in chunk.tables]
+            table_context_items = load_table_context(
+                table_context_root,
+                class_name=model_cls.__name__,
+                chunk_index=chunk.index,
+                table_signatures=table_signatures,
+                max_items=table_context_max_items,
+            )
+            table_context = _format_table_context(
+                chunk.tables,
+                table_context_items,
+                max_items=table_context_max_items,
+            )
+            table_context_collector = {} if should_chunk else None
+            run_class_extraction(
+                client=client,
+                model_name=model_name,
+                extra_body=extra_body,
+                system_prompt=system_prompt,
+                user_template=user_template,
+                markdown_text=chunk.text,
+                model_cls=extraction_model_cls,
+                db_model_name=model_cls.__name__,  # Use DB schema name for output file and context
+                output_dir=output_dir,
+                max_rounds=max_rounds,
+                table_context=table_context,
+                table_signatures=table_signatures,
+                table_context_collector=table_context_collector,
+                config=config,
+                overwrite=args.overwrite and chunk.index == 0,
+                extra_guidance=args.extra_guidance,
+            )
+            if table_context_collector:
+                write_table_context(
+                    table_context_root,
+                    class_name=model_cls.__name__,
+                    chunk_index=chunk.index,
+                    table_items=table_context_collector,
+                    max_items=table_context_max_items,
+                )
 
     # Extract combined Indicator + IndicatorValues
     should_run_combined = True
@@ -507,21 +718,47 @@ def main() -> None:
         try:
             indicator_with_values_cls = getattr(verified_module, "IndicatorWithValues")
             LOGGER.info("Extracting combined IndicatorWithValues...")
-            run_class_extraction(
-                client=client,
-                model_name=model_name,
-                extra_body=extra_body,
-                system_prompt=system_prompt,
-                user_template=user_template,
-                markdown_text=markdown_text,
-                model_cls=indicator_with_values_cls,
-                db_model_name="IndicatorWithValues",
-                output_dir=output_dir,
-                max_rounds=max_rounds,
-                config=config,
-                overwrite=args.overwrite,
-                extra_guidance=args.extra_guidance,
-            )
+            for chunk in chunks:
+                table_signatures = [table.signature for table in chunk.tables]
+                table_context_items = load_table_context(
+                    table_context_root,
+                    class_name="IndicatorWithValues",
+                    chunk_index=chunk.index,
+                    table_signatures=table_signatures,
+                    max_items=table_context_max_items,
+                )
+                table_context = _format_table_context(
+                    chunk.tables,
+                    table_context_items,
+                    max_items=table_context_max_items,
+                )
+                table_context_collector = {} if should_chunk else None
+                run_class_extraction(
+                    client=client,
+                    model_name=model_name,
+                    extra_body=extra_body,
+                    system_prompt=system_prompt,
+                    user_template=user_template,
+                    markdown_text=chunk.text,
+                    model_cls=indicator_with_values_cls,
+                    db_model_name="IndicatorWithValues",
+                    output_dir=output_dir,
+                    max_rounds=max_rounds,
+                    table_context=table_context,
+                    table_signatures=table_signatures,
+                    table_context_collector=table_context_collector,
+                    config=config,
+                    overwrite=args.overwrite and chunk.index == 0,
+                    extra_guidance=args.extra_guidance,
+                )
+                if table_context_collector:
+                    write_table_context(
+                        table_context_root,
+                        class_name="IndicatorWithValues",
+                        chunk_index=chunk.index,
+                        table_items=table_context_collector,
+                        max_items=table_context_max_items,
+                    )
         except AttributeError:
             LOGGER.debug(
                 "IndicatorWithValues schema not available, skipping combined extraction"

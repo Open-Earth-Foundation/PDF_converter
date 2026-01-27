@@ -1,9 +1,9 @@
-# PDF Converter Pipeline
+﻿# PDF Converter Pipeline
 
-Production pipeline: **PDF → Markdown → Structured Data → Linked Records**
+Production pipeline: **PDF â†’ Markdown â†’ Structured Data â†’ Linked Records**
 
-- **Stage 1:** PDF → Markdown (Mistral OCR + Vision refinement)
-- **Stage 2:** Markdown → Structured JSON (LLM extraction of 16 classes)
+- **Stage 1:** PDF â†’ Markdown (Mistral OCR + Vision refinement)
+- **Stage 2:** Markdown â†’ Structured JSON (LLM extraction of 16 classes)
 - **Stage 3:** Link records by foreign keys (optional)
 
 ---
@@ -44,6 +44,12 @@ python -m run_pipeline --input documents/ccc_dresden.pdf --no-vision
 python -m run_pipeline --no-mapping
 ```
 
+**Force chunked extraction (passes through to extraction):**
+
+```bash
+python -m run_pipeline --chunking
+```
+
 **Help:**
 
 ```bash
@@ -67,9 +73,9 @@ python -m run_pipeline
 
 ```
 output/
-├── pdf2markdown/          # Markdown files (TIMESTAMP_docname/)
-├── extraction/            # Extracted JSON (all classes)
-└── mapping/               # Linked records
+â”œâ”€â”€ pdf2markdown/          # Markdown files (TIMESTAMP_docname/)
+â”œâ”€â”€ extraction/            # Extracted JSON (all classes)
+â””â”€â”€ mapping/               # Linked records
 ```
 
 ---
@@ -97,8 +103,16 @@ pdf2markdown:
   ocr_model: mistral-ocr-latest
 
 extraction:
-  model: deepseek/deepseek-v3.2 # ⭐ Best for tool calling
+  model: deepseek/deepseek-v3.2 # â­ Best for tool calling
   temperature: 0.1
+  chunking:
+    enabled: false
+    auto_threshold_tokens: 300000
+    chunk_size_tokens: 200000
+    chunk_overlap_tokens: 10000
+    boundary_mode: paragraph_or_sentence
+    keep_tables_intact: true
+    table_context_max_items: 0 # 0 = include all same-table rows; reduce to limit prompt size
 
 mapping:
   model: google/gemini-3-flash-preview
@@ -107,7 +121,7 @@ mapping:
 
 ---
 
-## Stage 1: PDF → Markdown
+## Stage 1: PDF â†’ Markdown
 
 ### Examples (Using Pipeline Script)
 
@@ -148,17 +162,17 @@ python -m pdf2markdown.pdf_to_markdown --input large.pdf \
 
 ```
 output/pdf2markdown/TIMESTAMP_docname/
-├── combined_markdown.md       # Final markdown for extraction
-├── page-0001.md
-├── images/
-│   └── page-0001.jpeg
-└── vision_diffs/
-    └── page-0001-round-1.diff
+â”œâ”€â”€ combined_markdown.md       # Final markdown for extraction
+â”œâ”€â”€ page-0001.md
+â”œâ”€â”€ images/
+â”‚   â””â”€â”€ page-0001.jpeg
+â””â”€â”€ vision_diffs/
+    â””â”€â”€ page-0001-round-1.diff
 ```
 
 ---
 
-## Stage 2: Extraction (Markdown → JSON)
+## Stage 2: Extraction (Markdown â†’ JSON)
 
 ### Examples
 
@@ -166,6 +180,11 @@ output/pdf2markdown/TIMESTAMP_docname/
 # Extract all classes
 python -m extraction.scripts.extract \
   --markdown pdf2markdown/output/TIMESTAMP_doc/combined_markdown.md
+
+# Force chunking (still uses llm_config.yml sizes/thresholds)
+python -m extraction.scripts.extract \
+  --markdown pdf2markdown/output/TIMESTAMP_doc/combined_markdown.md \
+  --chunking
 
 # Specific classes only
 python -m extraction.scripts.extract \
@@ -207,15 +226,17 @@ CityTarget            InitiativeIndicator    TefCategory            InitiativeTe
 
 ### Key Features
 
-✅ **Year Extraction** - Properly extracts years from: "As at 31.12.2023" → 2023, "base year 2019" → 2019, "by 2030" → 2030
+âœ… **Year Extraction** - Properly extracts years from: "As at 31.12.2023" â†’ 2023, "base year 2019" â†’ 2019, "by 2030" â†’ 2030
 
-✅ **Tool Calling** - Uses function calls for structured output
+âœ… **Tool Calling** - Uses function calls for structured output
 
-✅ **Validation** - Pydantic models ensure data integrity
+âœ… **Validation** - Pydantic models ensure data integrity
 
-✅ **Duplicate Detection** - Skips duplicate records
+âœ… **Duplicate Detection** - Skips duplicate records
 
-✅ **Error Reporting** - Detailed logs show validation results
+âœ… **Error Reporting** - Detailed logs show validation results
+
+ƒo. **Large Document Chunking** - Auto-chunks Markdown above 300k tokens, preserves paragraph/sentence boundaries, and keeps tables intact (configured in `llm_config.yml`).
 
 ---
 
@@ -267,7 +288,7 @@ python -m extraction.scripts.extract \
   --output-dir output/extraction \
   --overwrite
 
-# 2. Map foreign keys (uses default dirs: output/extraction → output/mapping)
+# 2. Map foreign keys (uses default dirs: output/extraction â†’ output/mapping)
 python -m mapping.scripts.mapping --apply --delete-old
 
 # 3. Validate mappings
@@ -306,22 +327,22 @@ python -m app.scripts.test_insert
 
 ```
 project_root/
-├── pdf2markdown/              # Stage 1: PDF → Markdown
-├── extraction/                # Stage 2: Markdown → JSON
-│   ├── prompts/              # LLM prompts by class
-│   ├── tools/                # Tool definitions
-│   ├── utils/                # Validation & parsing
-│   ├── output/               # Extracted JSON files
-│   └── extract.py            # Core logic
-├── mapping/                   # Stage 3: Link records
-├── database/
-│   └── schemas.py            # Pydantic schemas (16 classes)
-├── documents/                # Input PDFs
-├── tests/
-├── llm_config.yml            # Model configuration
-├── run_pipeline.py           # Full pipeline
-├── requirements.txt
-└── README.md
+â”œâ”€â”€ pdf2markdown/              # Stage 1: PDF â†’ Markdown
+â”œâ”€â”€ extraction/                # Stage 2: Markdown â†’ JSON
+â”‚   â”œâ”€â”€ prompts/              # LLM prompts by class
+â”‚   â”œâ”€â”€ tools/                # Tool definitions
+â”‚   â”œâ”€â”€ utils/                # Validation & parsing
+â”‚   â”œâ”€â”€ output/               # Extracted JSON files
+â”‚   â””â”€â”€ extract.py            # Core logic
+â”œâ”€â”€ mapping/                   # Stage 3: Link records
+â”œâ”€â”€ database/
+â”‚   â””â”€â”€ schemas.py            # Pydantic schemas (16 classes)
+â”œâ”€â”€ documents/                # Input PDFs
+â”œâ”€â”€ tests/
+â”œâ”€â”€ llm_config.yml            # Model configuration
+â”œâ”€â”€ run_pipeline.py           # Full pipeline
+â”œâ”€â”€ requirements.txt
+â””â”€â”€ README.md
 ```
 
 ---
@@ -409,26 +430,26 @@ run_class_extraction(
 
 ## Recent Fixes (January 2026)
 
-✅ **Model Selection** - Switched extraction to `deepseek/deepseek-v3.2` for superior tool calling (was generating empty objects with google/gemini)
+âœ… **Model Selection** - Switched extraction to `deepseek/deepseek-v3.2` for superior tool calling (was generating empty objects with google/gemini)
 
-✅ **Year Extraction** - Enhanced `CityAnnualStats.md` prompt with explicit examples for extracting years from varied text patterns
+âœ… **Year Extraction** - Enhanced `CityAnnualStats.md` prompt with explicit examples for extracting years from varied text patterns
 
-✅ **Error Messages** - Improved validation feedback to show exactly which fields are missing and what data was received
+âœ… **Error Messages** - Improved validation feedback to show exactly which fields are missing and what data was received
 
 ---
 
 ## Architecture Details
 
-### PDF → Markdown Flow
+### PDF â†’ Markdown Flow
 
 ```
-PDF → [Mistral OCR] → Markdown + Images
-  ↓
-[2-Page Windows] → {image_left, markdown_left, image_right, markdown_right}
-  ↓
-[Vision Agent] → Tool calls → Edits
-  ↓
-Final Markdown ✓
+PDF â†’ [Mistral OCR] â†’ Markdown + Images
+  â†“
+[2-Page Windows] â†’ {image_left, markdown_left, image_right, markdown_right}
+  â†“
+[Vision Agent] â†’ Tool calls â†’ Edits
+  â†“
+Final Markdown âœ“
 ```
 
 ### How to Extend

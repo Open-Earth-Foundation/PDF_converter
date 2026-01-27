@@ -26,6 +26,10 @@ Flags:
 - `--overwrite` to clear existing JSON output for the selected classes before extraction.
 - `--extra-guidance` to append custom guidance to the class prompt (useful for re-runs).
 - `--log-level` to override `LOG_LEVEL` (default INFO).
+- `--chunking` to force chunked extraction (auto-chunks above 300k tokens via config).
+- `--chunk-size-tokens` to override chunk size.
+- `--chunk-overlap-tokens` to override chunk overlap.
+- `--chunk-auto-threshold-tokens` to override auto-chunk threshold.
 
 Environment:
 - `OPENAI_API_KEY` or `OPENROUTER_API_KEY` is required.
@@ -34,6 +38,10 @@ Environment:
 Debug logs:
 - Controlled by `debug_logs_enabled` in `llm_config.yml` (extraction.debug_logs_enabled).
 - Set `clean_debug_logs_on_start` to remove `extraction/debug_logs` at startup.
+
+## Chunking for Large Documents
+
+For documents above the configured `auto_threshold_tokens`, extraction auto-chunks the Markdown into ~200k-token windows with 10k overlap, splitting only at paragraph or sentence boundaries and keeping tables intact. Configure in `llm_config.yml` under `extraction.chunking`. Set `table_context_max_items` to `0` to include all same-table rows; lower it to limit prompt size.
 
 ## Combined Extraction: IndicatorWithValues
 
