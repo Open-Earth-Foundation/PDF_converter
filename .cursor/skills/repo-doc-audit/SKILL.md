@@ -56,7 +56,7 @@ Check:
 
 - Top-level module docstring exists and covers:
   - Brief
-  - Inputs
+  - Inputs (each CLI flag should have a short purpose + expected format; env vars should explain what they control)
   - Outputs
   - Usage from project root (`python -m ...`)
 - Uses `argparse` for CLI (when runnable).

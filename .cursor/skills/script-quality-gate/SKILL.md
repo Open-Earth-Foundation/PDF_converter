@@ -35,7 +35,11 @@ Add/maintain a top-level module docstring matching this template:
 Brief: <one-liner description>
 
 Inputs:
-- <list inputs, files, env vars, args>
+- CLI args: list each `--flag` with a short “what it does” plus expected format (and defaults when non-obvious).
+  - Example: `--input-dir`: Directory containing JSON outputs from the previous pipeline step.
+  - Example: `--dry-run`: Validate only; skip writes.
+- Files/paths: describe expected structure (file types, patterns, required subfolders).
+- Env vars: list required environment variables and what they control (never include secret values).
 
 Outputs:
 - <files, stdout, DB writes, API responses, etc.>

@@ -45,7 +45,7 @@ For any file intended to be executed as a script or documented as an entrypoint:
 
 - Ensure a **top-level module docstring** exists and is accurate:
   - Brief one-liner of what it does
-  - Inputs (files, env vars, CLI args)
+  - Inputs (files, env vars, CLI args) with enough detail to be self-explanatory (each CLI flag should have a short purpose + expected format)
   - Outputs (files, stdout, DB writes)
   - Usage example **from project root** using `python -m ...`
 - Ensure side effects do not run at import time (work in `main()`).

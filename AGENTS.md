@@ -42,7 +42,7 @@ Every repo must have a `README.md` with:
 Every script intended to be executed must include a **top-level docstring** describing:
 
 - What the script does (brief)
-- Inputs (files, env vars, CLI args)
+- Inputs (files, env vars, CLI args) with **enough detail to be self-explanatory**
 - Outputs (files, stdout, DB writes, API responses)
 - Usage examples (run as a module)
 
@@ -53,7 +53,11 @@ Every script intended to be executed must include a **top-level docstring** desc
 Brief: <one-liner description>
 
 Inputs:
-- <list inputs, files, env vars, args>
+- CLI args: list each `--flag` with a short description of what it does and the expected format.
+  - Example: `--input-dir`: Directory containing JSON files produced by the previous step.
+  - Example: `--mode`: `validate` (no writes) or `apply` (writes enabled).
+- Files/paths: describe expected structure/patterns (e.g. “directory of JSON lists”).
+- Env vars: list required env vars and what they control (do not include secrets).
 
 Outputs:
 - <files, stdout, DB writes, API responses, etc.>
