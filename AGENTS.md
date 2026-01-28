@@ -190,6 +190,16 @@ if __name__ == "__main__":
 - Do not copy or paste functions across scripts.
 - Import shared helpers instead.
 
+### Docstrings are required (functions and methods)
+
+- Every Python **function and method** must have a docstring.
+  - **Trivial** functions/methods: a minimal **one-liner** is enough.
+  - **Non-trivial** or side-effecting functions/methods: docstring must describe:
+    - inputs/parameters (expected types/shape and any constraints)
+    - return value (and what it represents)
+    - side effects (filesystem/DB/network, mutations, logging, caching)
+    - raised exceptions (when non-obvious)
+
 ### Logging is required
 
 - Use Python’s `logging` module, do not use `print`, except in rare CLI UX cases where it is explicitly intended.

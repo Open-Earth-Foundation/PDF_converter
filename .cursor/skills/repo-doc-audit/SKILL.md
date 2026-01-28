@@ -66,6 +66,11 @@ Check:
 - Imports: prefer **absolute imports**.
 - Paths: prefer `pathlib.Path`.
 
+Additionally (repo-wide): check that **every function and method** has a docstring.
+
+- Trivial functions/methods: one-liner docstring is acceptable.
+- Non-trivial or side-effecting functions/methods: docstring should explain inputs/outputs, side effects, and raised exceptions when non-obvious.
+
 ### 4) Produce an output report
 
 Deliver a report with:

@@ -53,6 +53,11 @@ For any file intended to be executed as a script or documented as an entrypoint:
 
 If the file is not runnable but is a “public” module (commonly imported or referenced in docs), ensure key functions/classes have docstrings where they clarify non-obvious behavior or invariants.
 
+Additionally (general rule): ensure **every function and method** you touched has a docstring.
+
+- Trivial functions/methods: a one-liner is enough.
+- Non-trivial or side-effecting functions/methods: describe inputs/outputs, side effects, and raised exceptions when non-obvious.
+
 ### 3) README updates: keep developer instructions truthful
 
 Update `README.md` if any of these changed:
