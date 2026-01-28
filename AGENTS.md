@@ -10,6 +10,22 @@ This repository contains a single AI project. All contributions must optimize fo
 
 ---
 
+## Cursor Agent Skills (project-level)
+
+This repo includes **project-level Cursor skills** under `.cursor/skills/` (version-controlled). These skills are available to anyone who checks out the repository and opens it in Cursor. See [Cursor Skills docs](https://cursor.com/docs/context/skills).
+
+### Mandatory after code changes
+
+After **any code change** (add/edit/delete/rename), you must apply the `docs-after-change` skill before ending your turn.
+
+Skills included:
+
+- `docs-after-change`: **Mandatory** after any code change. Keeps docstrings/README/architecture accurate.
+- `script-quality-gate`: Use when adding/changing a runnable script or CLI entrypoint.
+- `repo-doc-audit`: One-off full repo documentation audit (**manual** via `/repo-doc-audit`).
+
+---
+
 ## Documentation requirements
 
 ### README.md must be up to date
@@ -110,6 +126,13 @@ Notes:
 
 - Do not commit `.env`. Use `.env.example` to document required variables.
 - If you need non-code assets (sample prompts, fixtures, tiny sample data), put them in a clearly named folder, for example `assets/` or `tests/fixtures/`.
+
+Adaptation note (project-specific naming):
+
+- The folder name `app/` in the hierarchy above is a **placeholder** for the project’s main application package/folder.
+- A given repository may deviate (e.g., the “app” code may live in multiple top-level packages, or the folder may be named differently). In that case, follow the **existing** repository layout and map the same concepts:
+  - “app-level code” = the primary top-level package(s) containing application logic
+  - “modules” = subpackages/features within that package (or equivalent top-level packages if the repo is split)
 
 ---
 
