@@ -1,15 +1,27 @@
 """
 Brief: Load mapped JSON outputs into the database with validation and reporting.
 
+The mapping pipeline has 3 stages:
+- step1_cleared: Clear and prepare raw extracted data
+- step2_city: Map and anchor city data
+- step3_llm: LLM-based mapping to generate final normalized JSON files (this script's input)
+
 Inputs:
-- --input-dir: directory with mapping step3 outputs (JSON lists)
-- --mode: validate or permissive
-- --report-path: optional report output path (JSON)
-- --dry-run: validate only, skip inserts
-- --on-error: stop or continue
-- --atomic: single transaction across all tables (all-or-nothing for all cities)
-- --per-city: atomic per city (each city's data is all-or-nothing, but cities load independently)
-- Env: DATABASE_URL or DB_URL (loaded from .env)
+- --input-dir: Directory with step3_llm outputs (final normalized JSON files for all tables).
+  Default: output/mapping/step3_llm
+- --mode: Validation mode (default: validate)
+  * validate: Strict mode - validate all records against schema, reject any with errors
+  * permissive: Lenient mode - skip unknown fields, attempt to load even with minor issues
+- --report-path: Optional custom path for JSON report output. Default: auto-generated timestamp
+- --dry-run: Run validation without inserting into database (read-only audit run)
+- --on-error: Error handling strategy (default: stop)
+  * stop: Halt processing immediately on first error
+  * continue: Skip failed records and keep processing remaining data
+- --atomic: Use single transaction across all tables (all-or-nothing semantics for entire load).
+  If any table fails, entire load is rolled back
+- --per-city: Use per-city atomic transactions (each city's data is all-or-nothing,
+  but different cities load independently). Useful for partial recovery if one city fails
+- Env: DATABASE_URL or DB_URL (loaded from .env for database connection)
 
 Outputs:
 - Inserts rows into the database (unless --dry-run)
@@ -30,7 +42,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from app.modules.db_insert.module import (
+from app.modules.db_insert.loader import (
     DEFAULT_INPUT_DIR,
     ensure_report_path,
     run_load,

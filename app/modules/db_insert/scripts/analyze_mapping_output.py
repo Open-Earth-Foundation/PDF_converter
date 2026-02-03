@@ -1,18 +1,28 @@
 """
 Brief: Analyze mapped JSON outputs for duplicate keys and unique constraint issues.
 
+The mapping pipeline has 3 stages:
+- step1_cleared: Clear and prepare raw extracted data
+- step2_city: Map and anchor city data
+- step3_llm: LLM-based mapping to generate final normalized JSON files (this script's input)
+
 Inputs:
-- --input-dir: directory with mapping step3 outputs (JSON lists)
-- --report-path: optional report output path (JSON)
-- --max-details: max duplicate groups to include in the report (default: 50)
+- --input-dir: Directory with step3_llm outputs (final normalized JSON files to analyze).
+  Scans for duplicate primary/composite keys before database insertion.
+  Default: output/mapping/step3_llm
+- --report-path: Optional custom path for JSON report output. Default: auto-generated timestamp
+- --max-details: Maximum number of duplicate groups to include in detailed report (default: 50).
+  Limits report size while maintaining summary statistics for all tables
 
 Outputs:
-- Logs summary of duplicate key issues per table
+- Logs summary of duplicate key issues per table (printed to stdout)
 - JSON report with duplicate details and table summaries
+  Contains: duplicate record indices, affected keys, and suggestions for resolution
 
 Usage (from project root):
 - python -m app.modules.db_insert.scripts.analyze_mapping_output
-- python -m app.modules.db_insert.scripts.analyze_mapping_output --input-dir mapping/workflow_output/step3_llm
+- python -m app.modules.db_insert.scripts.analyze_mapping_output --input-dir output/mapping/step3_llm
+- python -m app.modules.db_insert.scripts.analyze_mapping_output --max-details 100
 """
 
 from __future__ import annotations
@@ -22,12 +32,12 @@ import json
 import logging
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from sqlalchemy import UniqueConstraint
 
 from app.modules.db_insert.models import TableSpec
-from app.modules.db_insert.module import (
+from app.modules.db_insert.loader import (
     DEFAULT_INPUT_DIR,
     DEFAULT_REPORT_DIR,
     TABLE_SPECS,
@@ -77,7 +87,7 @@ def get_unique_constraints(model: type[Any]) -> list[tuple[str, list[str]]]:
         if not isinstance(constraint, UniqueConstraint):
             continue
         columns = [col.name for col in constraint.columns]
-        name = constraint.name or f"unique_{'_'.join(columns)}"
+        name = cast(str, constraint.name or f"unique_{'_'.join(columns)}")
         constraints.append((name, columns))
     return constraints
 
@@ -146,9 +156,7 @@ def analyze_table(
     unique_summary: dict[str, dict[str, Any]] = {}
     for name, columns in unique_constraints:
         groups = {
-            key: idxs
-            for key, idxs in constraint_maps[name].items()
-            if len(idxs) > 1
+            key: idxs for key, idxs in constraint_maps[name].items() if len(idxs) > 1
         }
         duplicate_groups_total += len(groups)
         unique_summary[name] = {

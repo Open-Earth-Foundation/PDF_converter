@@ -1,4 +1,8 @@
-"""Central LLM config loader."""
+"""Central LLM config loader.
+
+NOTE: llm_config.yml is REQUIRED and must exist in the project root.
+The application will fail to start without it.
+"""
 
 from __future__ import annotations
 
@@ -9,50 +13,29 @@ import yaml
 
 LLM_CONFIG_PATH = Path(__file__).resolve().parent.parent / "llm_config.yml"
 
-DEFAULT_LLM_CONFIG: Dict[str, Dict[str, Any]] = {
-    "pdf2markdown": {
-        "model": "google/gemini-3-flash-preview",
-        "temperature": 0.0,
-        "ocr_model": "mistral-ocr-latest",
-    },
-    "extraction": {
-        "model": "google/gemini-3-flash-preview",
-        "temperature": 0.0,
-        "token_limit": 900000,
-        "max_rounds": 12,
-        "debug_logs_enabled": True,
-        "clean_debug_logs_on_start": True,
-        "debug_logs_full_response_once": True,
-        "debug_logs_full_response": False,
-        "chunking": {
-            "enabled": False,
-            "auto_threshold_tokens": 300000,
-            "chunk_size_tokens": 200000,
-            "chunk_overlap_tokens": 10000,
-            "boundary_mode": "paragraph_or_sentence",
-            "keep_tables_intact": True,
-            "table_context_max_items": 0,
-        },
-    },
-    "mapping": {"model": "google/gemini-3-flash-preview", "temperature": 0.0},
-}
-
 
 def load_llm_config() -> Dict[str, Dict[str, Any]]:
-    """Load llm_config.yml, falling back to defaults if missing or invalid."""
+    """Load llm_config.yml from the project root.
+
+    Raises:
+        FileNotFoundError: If llm_config.yml does not exist.
+        ValueError: If llm_config.yml is invalid or not a dictionary.
+    """
     if not LLM_CONFIG_PATH.exists():
-        return DEFAULT_LLM_CONFIG.copy()
+        raise FileNotFoundError(
+            f"llm_config.yml is required but not found at {LLM_CONFIG_PATH}\n"
+            "Please create llm_config.yml in the project root with your LLM configuration."
+        )
     try:
-        payload = yaml.safe_load(LLM_CONFIG_PATH.read_text(encoding="utf-8")) or {}
+        payload = yaml.safe_load(LLM_CONFIG_PATH.read_text(encoding="utf-8"))
         if not isinstance(payload, dict):
-            return DEFAULT_LLM_CONFIG.copy()
-        merged = DEFAULT_LLM_CONFIG.copy()
-        for section, cfg in payload.items():
-            if isinstance(cfg, dict):
-                merged[section] = {**merged.get(section, {}), **cfg}
-        return merged
-    except Exception:
-        return DEFAULT_LLM_CONFIG.copy()
+            raise ValueError(
+                f"llm_config.yml must contain a dictionary at the root level, "
+                f"but got {type(payload).__name__}"
+            )
+        return payload
+    except yaml.YAMLError as e:
+        raise ValueError(f"Failed to parse llm_config.yml: {e}") from e
 
 
-__all__ = ["load_llm_config", "LLM_CONFIG_PATH", "DEFAULT_LLM_CONFIG"]
+__all__ = ["load_llm_config", "LLM_CONFIG_PATH"]

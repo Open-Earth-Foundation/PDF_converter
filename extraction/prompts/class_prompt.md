@@ -44,6 +44,7 @@ Table context (same-table only; avoid duplicates):
 **Verified Field Examples**:
 
 For a target year field (quote MUST be verbatim from source):
+
 ```json
 {{
   "targetYear": "2030",
@@ -53,6 +54,7 @@ For a target year field (quote MUST be verbatim from source):
 ```
 
 For an amount field (quote MUST be verbatim from source):
+
 ```json
 {{
   "totalAmount": "5000000",
@@ -62,6 +64,7 @@ For an amount field (quote MUST be verbatim from source):
 ```
 
 For an optional field not found in source (ONLY if document explicitly states absence):
+
 ```json
 {{
   "status": null,
@@ -69,12 +72,14 @@ For an optional field not found in source (ONLY if document explicitly states ab
   "status_confidence": 0.85
 }}
 ```
-⚠️ **ONLY VALID IF** "status not mentioned" or similar text appears verbatim in the source document. Otherwise, OMIT all three fields (status, status_quote, status_confidence) entirely.
+
+**ONLY VALID IF** "status not mentioned" or similar text appears verbatim in the source document. Otherwise, OMIT all three fields (status, status_quote, status_confidence) entirely.
 
 **CRITICAL: null Values with Quotes**:
+
 - Use `null` value ONLY when the document explicitly states the absence (e.g., "not specified", "not available", "N/A")
 - The quote MUST be found verbatim in the source document
-- If the document is silent (just doesn't mention the field), OMIT all three related fields (value, _quote, _confidence)
+- If the document is silent (just doesn't mention the field), OMIT all three related fields (value, \_quote, \_confidence)
 - Example valid: `"baselineYear_quote": "baseline not specified"` (if this exact text is in source)
 - Example invalid: `"baselineYear_quote": "no baseline information found"` (if this exact text is NOT in source)
 

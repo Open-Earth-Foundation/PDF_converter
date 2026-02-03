@@ -503,7 +503,9 @@ def run_load(
 
     validation_failed = False
 
-    def get_city_ids_from_records(records_by_table: dict[str, list[dict[str, Any]]]) -> set[str]:
+    def get_city_ids_from_records(
+        records_by_table: dict[str, list[dict[str, Any]]],
+    ) -> set[str]:
         """Extract all unique city IDs from records that have a cityId field."""
         city_ids: set[str] = set()
         for table_records in records_by_table.values():
@@ -523,9 +525,14 @@ def run_load(
             ]
         return filtered
 
-    def handle_tables(session: Session | None = None, filtered_records: dict[str, list[dict[str, Any]]] | None = None) -> None:
+    def handle_tables(
+        session: Session | None = None,
+        filtered_records: dict[str, list[dict[str, Any]]] | None = None,
+    ) -> None:
         nonlocal validation_failed
-        records_to_use = filtered_records if filtered_records is not None else records_by_table
+        records_to_use = (
+            filtered_records if filtered_records is not None else records_by_table
+        )
         for spec in TABLE_SPECS:
             raw_records = records_to_use.get(spec.name, [])
             if not raw_records:
@@ -568,12 +575,16 @@ def run_load(
                     filtered_records = filter_records_by_city(records_by_table, city_id)
                     with session_factory() as session:
                         try:
-                            LOGGER.info("Starting atomic transaction for city %s", city_id)
+                            LOGGER.info(
+                                "Starting atomic transaction for city %s", city_id
+                            )
                             with session.begin():
                                 handle_tables(session, filtered_records)
                             LOGGER.info("Committed transaction for city %s", city_id)
                         except StopProcessing as exc:
-                            LOGGER.warning("Rolling back transaction for city %s: %s", city_id, exc)
+                            LOGGER.warning(
+                                "Rolling back transaction for city %s: %s", city_id, exc
+                            )
                             validation_failed = True
                             if on_error == "stop":
                                 break
