@@ -1,9 +1,0 @@
-model: moonshotai/kimi-k2-thinking
-
-# Extraction limits and performance settings
-token_limit: 900000 # Maximum tokens allowed in markdown file
-max_rounds: 12 # Maximum tool-calling rounds per class (increase for complex documents)
-
-# Debug and logging configuration
-debug_logs_enabled: true # Set to false to disable debug logging
-clean_debug_logs_on_start: true # Clean debug logs directory at script start

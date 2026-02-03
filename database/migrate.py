@@ -172,6 +172,7 @@ def main() -> int:
     cfg = load_alembic_config()
 
     if args.command == "upgrade":
+        LOGGER.info("Running Alembic upgrade to '%s'.", args.revision)
         try:
             command.upgrade(cfg, args.revision)
             LOGGER.info("Migration upgrade to '%s' completed successfully.", args.revision)
@@ -180,6 +181,7 @@ def main() -> int:
             raise
         return 0
     if args.command == "downgrade":
+        LOGGER.info("Running Alembic downgrade to '%s'.", args.revision)
         try:
             command.downgrade(cfg, args.revision)
             LOGGER.info("Migration downgrade to '%s' completed successfully.", args.revision)

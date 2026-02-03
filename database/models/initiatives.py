@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 from decimal import Decimal
+from typing import Any
 from uuid import UUID, uuid4
 
-from sqlalchemy import ForeignKey, Integer, Numeric, String, Text, UniqueConstraint
-from sqlalchemy.dialects.postgresql import UUID as PG_UUID
+from sqlalchemy import BigInteger, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint
+from sqlalchemy.dialects.postgresql import JSONB, UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from database.base import Base
@@ -24,11 +25,14 @@ class Initiative(Base):
     start_year: Mapped[int | None] = mapped_column("startYear", Integer, nullable=True)
     end_year: Mapped[int | None] = mapped_column("endYear", Integer, nullable=True)
     total_estimated_cost: Mapped[int | None] = mapped_column(
-        "totalEstimatedCost", Integer, nullable=True
+        "totalEstimatedCost", BigInteger, nullable=True
     )
     currency: Mapped[str | None] = mapped_column("currency", String, nullable=True)
     status: Mapped[str | None] = mapped_column("status", String, nullable=True)
     notes: Mapped[str | None] = mapped_column("notes", Text, nullable=True)
+    misc: Mapped[dict[str, Any] | None] = mapped_column(
+        "misc", JSONB, nullable=True
+    )
 
 
 class Stakeholder(Base):
@@ -41,6 +45,9 @@ class Stakeholder(Base):
     type: Mapped[str | None] = mapped_column("type", String, nullable=True)
     description: Mapped[str | None] = mapped_column("description", Text, nullable=True)
     notes: Mapped[str | None] = mapped_column("notes", Text, nullable=True)
+    misc: Mapped[dict[str, Any] | None] = mapped_column(
+        "misc", JSONB, nullable=True
+    )
 
 
 class InitiativeStakeholder(Base):
@@ -67,6 +74,9 @@ class InitiativeStakeholder(Base):
     )
     role: Mapped[str | None] = mapped_column("role", String, nullable=True)
     notes: Mapped[str | None] = mapped_column("notes", Text, nullable=True)
+    misc: Mapped[dict[str, Any] | None] = mapped_column(
+        "misc", JSONB, nullable=True
+    )
 
 
 class InitiativeIndicator(Base):
@@ -98,3 +108,6 @@ class InitiativeIndicator(Base):
         "expectedChange", Numeric, nullable=True
     )
     notes: Mapped[str | None] = mapped_column("notes", Text, nullable=True)
+    misc: Mapped[dict[str, Any] | None] = mapped_column(
+        "misc", JSONB, nullable=True
+    )

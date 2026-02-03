@@ -9,7 +9,7 @@ Structured data extraction from Markdown using the OpenAI Responses API with too
   - `verified_utils.py` – Quote validation and verified-to-database mapping utilities.
 - `prompts/` – system/user prompts and per-class context.
 - `schemas_verified.py` – Extraction-specific schemas with verified fields.
-- `config.yaml` – default model and runtime settings.
+- `llm_config.yml` – default model and runtime settings (extraction section).
 - `output/` – extracted JSON files.
 - `debug_logs/` – optional per-round response logs (controlled by config).
 
@@ -20,18 +20,57 @@ python -m extraction.scripts.extract --markdown path/to/combined_markdown.md
 ```
 
 Flags:
-- `--model` to override the model in `config.yaml`.
+- `--model` to override the model in `llm_config.yml` (extraction.model).
 - `--max-rounds` to override the configured round limit.
 - `--class-names` to target specific Pydantic classes.
+- `--overwrite` to clear existing JSON output for the selected classes before extraction.
+- `--extra-guidance` to append custom guidance to the class prompt (useful for re-runs).
 - `--log-level` to override `LOG_LEVEL` (default INFO).
+- `--chunking` to force chunked extraction (auto-chunks above 300k tokens via config).
+- `--chunk-size-tokens` to override chunk size.
+- `--chunk-overlap-tokens` to override chunk overlap.
+- `--chunk-auto-threshold-tokens` to override auto-chunk threshold.
 
 Environment:
 - `OPENAI_API_KEY` or `OPENROUTER_API_KEY` is required.
 - `LOG_LEVEL` can control verbosity.
 
 Debug logs:
-- Controlled by `debug_logs_enabled` in `config.yaml`.
+- Controlled by `debug_logs_enabled` in `llm_config.yml` (extraction.debug_logs_enabled).
 - Set `clean_debug_logs_on_start` to remove `extraction/debug_logs` at startup.
+
+## Chunking for Large Documents
+
+For documents above the configured `auto_threshold_tokens`, extraction auto-chunks the Markdown into ~200k-token windows with 10k overlap, splitting only at paragraph or sentence boundaries and keeping tables intact. Configure in `llm_config.yml` under `extraction.chunking`. Set `table_context_max_items` to `0` to include all same-table rows; lower it to limit prompt size.
+
+## Combined Extraction: IndicatorWithValues
+
+For documents with time-series measurements, use the combined `IndicatorWithValues` schema to extract an indicator definition with all its associated values in a single grouped structure.
+
+**Example output:**
+```json
+{
+  "name": "Population",
+  "unit": "people",
+  "values": [
+    {
+      "year": 2019,
+      "value": "572240",
+      "valueType": "actual",
+      "misc": {
+        "year_proof": {"quote": "In 2019", "confidence": 0.95},
+        "value_proof": {"quote": "572,240 residents", "confidence": 0.95}
+      }
+    }
+  ]
+}
+```
+
+**Benefits:**
+- Links measurements to their parent indicator automatically
+- Keeps related data grouped together
+- Avoids orphaned IndicatorValues
+- Enables better data validation and analysis
 
 ## Evidence Pattern (Verified Extraction)
 
@@ -48,6 +87,7 @@ Certain fields in extraction schemas are marked as "verified" and must include e
 
 - **CityTarget**: `targetYear`, `targetValue`, `baselineYear`, `baselineValue`, `status`
 - **EmissionRecord**: `year`, `value`
+- **IndicatorWithValues**: Combined indicator + multiple values with verified `year` and `value` per measurement
 - **CityBudget**: `year`, `totalAmount`
 - **IndicatorValue**: `year`, `value`
 - **BudgetFunding**: `amount`

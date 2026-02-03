@@ -1,4 +1,4 @@
-"""Extraction-specific Pydantic schemas with VerifiedField for Evidence Pattern enforcement."""
+"""Extraction-specific Pydantic schemas with flat quote/confidence fields for Evidence Pattern enforcement."""
 
 from __future__ import annotations
 
@@ -8,8 +8,6 @@ from decimal import Decimal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
-
-from extraction.utils.verified_field import VerifiedField
 
 # The schema marks several columns as "enum" but does not provide members.
 # To remain faithful and avoid constraining inputs prematurely, those columns
@@ -28,70 +26,117 @@ class BaseDBModel(BaseModel):
 
 class VerifiedCityTarget(BaseDBModel):
     """
-    CityTarget with verified fields for numeric/date/status values.
+    CityTarget with flat quote/confidence fields for numeric/date/status values.
 
-    The following fields are verified (include value, quote, confidence):
-    - targetYear, targetValue, baselineYear, baselineValue, status
+    Verified fields use flat structure:
+    - targetYear (str) + targetYear_quote (str) + targetYear_confidence (float)
+    - targetValue (str) + targetValue_quote (str) + targetValue_confidence (float)
+    - baselineYear (str) + baselineYear_quote (str) + baselineYear_confidence (float)
+    - baselineValue (str) + baselineValue_quote (str) + baselineValue_confidence (float)
+    - status (str) + status_quote (str) + status_confidence (float)
 
     Other fields remain as regular types.
-
-    Note: status is optional (VerifiedField[str] | None) to allow evidence-based validation
-    when status is not mentioned in source (with appropriate quote like "status not mentioned").
     """
 
     city_target_id: UUID | None = Field(alias="cityTargetId", default=None)
     city_id: UUID | None = Field(alias="cityId", default=None)
     indicator_id: UUID | None = Field(alias="indicatorId", default=None)
     description: str = Field(alias="description")
-    target_year: VerifiedField[str] = Field(alias="targetYear")  # date as string
-    target_value: VerifiedField[str] = Field(alias="targetValue")  # decimal as string
-    baseline_year: VerifiedField[str] | None = Field(
-        default=None, alias="baselineYear"
-    )  # date as string
-    baseline_value: VerifiedField[str] | None = Field(
-        default=None, alias="baselineValue"
-    )  # decimal as string
-    status: VerifiedField[str] | None = Field(
-        default=None, alias="status"
-    )  # Optional with verification
+
+    # Verified field: targetYear
+    target_year: str = Field(alias="targetYear")
+    target_year_quote: str = Field(alias="targetYear_quote")
+    target_year_confidence: float = Field(alias="targetYear_confidence", ge=0.0, le=1.0)
+
+    # Verified field: targetValue
+    target_value: str = Field(alias="targetValue")
+    target_value_quote: str = Field(alias="targetValue_quote")
+    target_value_confidence: float = Field(
+        alias="targetValue_confidence", ge=0.0, le=1.0
+    )
+
+    # Verified field: baselineYear (optional)
+    baseline_year: str | None = Field(default=None, alias="baselineYear")
+    baseline_year_quote: str | None = Field(default=None, alias="baselineYear_quote")
+    baseline_year_confidence: float | None = Field(
+        default=None, alias="baselineYear_confidence", ge=0.0, le=1.0
+    )
+
+    # Verified field: baselineValue (optional)
+    baseline_value: str | None = Field(default=None, alias="baselineValue")
+    baseline_value_quote: str | None = Field(default=None, alias="baselineValue_quote")
+    baseline_value_confidence: float | None = Field(
+        default=None, alias="baselineValue_confidence", ge=0.0, le=1.0
+    )
+
+    # Verified field: status (optional)
+    status: str | None = Field(default=None, alias="status")
+    status_quote: str | None = Field(default=None, alias="status_quote")
+    status_confidence: float | None = Field(
+        default=None, alias="status_confidence", ge=0.0, le=1.0
+    )
+
     notes: str | None = Field(default=None, alias="notes")
 
 
 class VerifiedEmissionRecord(BaseDBModel):
     """
-    EmissionRecord with verified fields for year and value.
+    EmissionRecord with flat quote/confidence fields for year and value.
 
-    The following fields are verified (include value, quote, confidence):
-    - year, value
+    Verified fields use flat structure:
+    - year (str) + year_quote (str) + year_confidence (float)
+    - value (str) + value_quote (str) + value_confidence (float)
 
     Other fields remain as regular types.
     """
 
     emission_record_id: UUID | None = Field(alias="emissionRecordId", default=None)
     city_id: UUID | None = Field(alias="cityId", default=None)
-    year: VerifiedField[str] = Field(alias="year")  # date as string
+
+    # Verified field: year
+    year: str = Field(alias="year")
+    year_quote: str = Field(alias="year_quote")
+    year_confidence: float = Field(alias="year_confidence", ge=0.0, le=1.0)
+
     sector_id: UUID | None = Field(alias="sectorId", default=None)
     scope: str = Field(alias="scope")  # TODO: enum when vocabulary set
     ghg_type: str = Field(alias="ghgType")  # TODO: enum when vocabulary set
-    value: VerifiedField[str] = Field(alias="value")  # integer as string
+
+    # Verified field: value
+    value: str = Field(alias="value")
+    value_quote: str = Field(alias="value_quote")
+    value_confidence: float = Field(alias="value_confidence", ge=0.0, le=1.0)
+
     unit: str = Field(alias="unit")  # TODO: enum when vocabulary set
     notes: str | None = Field(default=None, alias="notes")
 
 
 class VerifiedCityBudget(BaseDBModel):
     """
-    CityBudget with verified fields for year and totalAmount.
+    CityBudget with flat quote/confidence fields for year and totalAmount.
 
-    The following fields are verified (include value, quote, confidence):
-    - year, totalAmount
+    Verified fields use flat structure:
+    - year (str) + year_quote (str) + year_confidence (float)
+    - totalAmount (str) + totalAmount_quote (str) + totalAmount_confidence (float)
 
     Other fields remain as regular types.
     """
 
     budget_id: UUID | None = Field(alias="budgetId", default=None)
     city_id: UUID | None = Field(alias="cityId", default=None)
-    year: VerifiedField[str] = Field(alias="year")  # datetime as string
-    total_amount: VerifiedField[str] = Field(alias="totalAmount")  # integer as string
+
+    # Verified field: year
+    year: str = Field(alias="year")
+    year_quote: str = Field(alias="year_quote")
+    year_confidence: float = Field(alias="year_confidence", ge=0.0, le=1.0)
+
+    # Verified field: totalAmount
+    total_amount: str = Field(alias="totalAmount")
+    total_amount_quote: str = Field(alias="totalAmount_quote")
+    total_amount_confidence: float = Field(
+        alias="totalAmount_confidence", ge=0.0, le=1.0
+    )
+
     currency: str = Field(alias="currency")  # TODO: enum when vocabulary set
     description: str | None = Field(default=None, alias="description")
     notes: str | None = Field(default=None, alias="notes")
@@ -99,28 +144,38 @@ class VerifiedCityBudget(BaseDBModel):
 
 class VerifiedIndicatorValue(BaseDBModel):
     """
-    IndicatorValue with verified fields for year and value.
+    IndicatorValue with flat quote/confidence fields for year and value.
 
-    The following fields are verified (include value, quote, confidence):
-    - year, value
+    Verified fields use flat structure:
+    - year (str) + year_quote (str) + year_confidence (float)
+    - value (str) + value_quote (str) + value_confidence (float)
 
     Other fields remain as regular types.
     """
 
     indicator_value_id: UUID | None = Field(alias="indicatorValueId", default=None)
     indicator_id: UUID | None = Field(alias="indicatorId", default=None)
-    year: VerifiedField[str] = Field(alias="year")  # date as string
-    value: VerifiedField[str] = Field(alias="value")  # decimal as string
+
+    # Verified field: year
+    year: str = Field(alias="year")
+    year_quote: str = Field(alias="year_quote")
+    year_confidence: float = Field(alias="year_confidence", ge=0.0, le=1.0)
+
+    # Verified field: value
+    value: str = Field(alias="value")
+    value_quote: str = Field(alias="value_quote")
+    value_confidence: float = Field(alias="value_confidence", ge=0.0, le=1.0)
+
     value_type: str = Field(alias="valueType")  # TODO: enum when vocabulary set
     notes: str | None = Field(default=None, alias="notes")
 
 
 class VerifiedBudgetFunding(BaseDBModel):
     """
-    BudgetFunding with verified fields for amount.
+    BudgetFunding with flat quote/confidence fields for amount.
 
-    The following fields are verified (include value, quote, confidence):
-    - amount
+    Verified fields use flat structure:
+    - amount (str) + amount_quote (str) + amount_confidence (float)
 
     Other fields remain as regular types.
     """
@@ -128,17 +183,47 @@ class VerifiedBudgetFunding(BaseDBModel):
     budget_funding_id: UUID | None = Field(alias="budgetFundingId", default=None)
     budget_id: UUID | None = Field(alias="budgetId", default=None)
     funding_source_id: UUID | None = Field(alias="fundingSourceId", default=None)
-    amount: VerifiedField[str] = Field(alias="amount")  # integer as string
+
+    # Verified field: amount
+    amount: str = Field(alias="amount")
+    amount_quote: str = Field(alias="amount_quote")
+    amount_confidence: float = Field(alias="amount_confidence", ge=0.0, le=1.0)
+
     currency: str = Field(alias="currency")  # TODO: enum when vocabulary set
+    notes: str | None = Field(default=None, alias="notes")
+
+
+class IndicatorWithValues(BaseDBModel):
+    """
+    Combined schema for extracting an Indicator with its associated IndicatorValues.
+
+    This allows grouping multiple measurements with a single indicator definition,
+    making it easier to link values to their parent indicator.
+    """
+
+    # Indicator fields
+    indicator_id: UUID | None = Field(alias="indicatorId", default=None)
+    city_id: UUID | None = Field(alias="cityId", default=None)
+    sector_id: UUID | None = Field(default=None, alias="sectorId")
+    name: str = Field(alias="name")
+    description: str = Field(alias="description")
+    unit: str = Field(alias="unit")
+
+    # Indicator values as nested array
+    values: list[dict[str, Any]] | None = Field(default=None, alias="values")
+
     notes: str | None = Field(default=None, alias="notes")
 
 
 class VerifiedInitiative(BaseDBModel):
     """
-    Initiative with verified fields for startYear, endYear, totalEstimatedCost, and status.
+    Initiative with flat quote/confidence fields for startYear, endYear, totalEstimatedCost, and status.
 
-    The following fields are verified (include value, quote, confidence):
-    - startYear, endYear, totalEstimatedCost, status
+    Verified fields use flat structure:
+    - startYear (str) + startYear_quote (str) + startYear_confidence (float)
+    - endYear (str) + endYear_quote (str) + endYear_confidence (float)
+    - totalEstimatedCost (str) + totalEstimatedCost_quote (str) + totalEstimatedCost_confidence (float)
+    - status (str) + status_quote (str) + status_confidence (float)
 
     Other fields remain as regular types.
     """
@@ -146,20 +231,38 @@ class VerifiedInitiative(BaseDBModel):
     initiative_id: UUID | None = Field(alias="initiativeId", default=None)
     city_id: UUID | None = Field(alias="cityId", default=None)
     title: str = Field(alias="title")
-    description: str | None = Field(default=None, alias="description")
-    start_year: VerifiedField[str] | None = Field(
-        default=None, alias="startYear"
-    )  # integer as string
-    end_year: VerifiedField[str] | None = Field(
-        default=None, alias="endYear"
-    )  # integer as string
-    total_estimated_cost: VerifiedField[str] | None = Field(
-        default=None, alias="totalEstimatedCost"
-    )  # integer as string
-    currency: str | None = Field(
-        default=None, alias="currency"
-    )  # TODO: enum when vocabulary set
-    status: VerifiedField[str] | None = Field(
-        default=None, alias="status"
-    )  # TODO: enum when vocabulary set
+    description: str = Field(alias="description")
+
+    # Verified field: startYear (optional)
+    start_year: str | None = Field(default=None, alias="startYear")
+    start_year_quote: str | None = Field(default=None, alias="startYear_quote")
+    start_year_confidence: float | None = Field(
+        default=None, alias="startYear_confidence", ge=0.0, le=1.0
+    )
+
+    # Verified field: endYear (optional)
+    end_year: str | None = Field(default=None, alias="endYear")
+    end_year_quote: str | None = Field(default=None, alias="endYear_quote")
+    end_year_confidence: float | None = Field(
+        default=None, alias="endYear_confidence", ge=0.0, le=1.0
+    )
+
+    # Verified field: totalEstimatedCost (optional)
+    total_estimated_cost: str | None = Field(default=None, alias="totalEstimatedCost")
+    total_estimated_cost_quote: str | None = Field(
+        default=None, alias="totalEstimatedCost_quote"
+    )
+    total_estimated_cost_confidence: float | None = Field(
+        default=None, alias="totalEstimatedCost_confidence", ge=0.0, le=1.0
+    )
+
+    currency: str = Field(alias="currency")  # TODO: enum when vocabulary set
+
+    # Verified field: status (optional)
+    status: str | None = Field(default=None, alias="status")
+    status_quote: str | None = Field(default=None, alias="status_quote")
+    status_confidence: float | None = Field(
+        default=None, alias="status_confidence", ge=0.0, le=1.0
+    )
+
     notes: str | None = Field(default=None, alias="notes")

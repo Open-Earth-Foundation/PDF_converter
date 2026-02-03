@@ -3,14 +3,32 @@
 import logging
 from pathlib import Path
 
-import yaml
+from utils import load_llm_config
 
 LOGGER = logging.getLogger(__name__)
 
 BASE_DIR = Path(__file__).resolve().parents[1]
 PROMPTS_DIR = BASE_DIR / "prompts"
-CONFIG_PATH = BASE_DIR / "config.yaml"
 DEBUG_LOG_DIR = BASE_DIR / "debug_logs"
+DEFAULT_EXTRACTION_CONFIG = {
+    "model": "google/gemini-3-flash-preview",
+    "temperature": 0.0,
+    "token_limit": 900000,
+    "max_rounds": 12,
+    "debug_logs_enabled": True,
+    "clean_debug_logs_on_start": True,
+    "debug_logs_full_response_once": True,
+    "debug_logs_full_response": False,
+    "chunking": {
+        "enabled": False,
+        "auto_threshold_tokens": 300000,
+        "chunk_size_tokens": 200000,
+        "chunk_overlap_tokens": 10000,
+        "boundary_mode": "paragraph_or_sentence",
+        "keep_tables_intact": True,
+        "table_context_max_items": 0,
+    },
+}
 
 
 def load_prompt(name: str) -> str:
@@ -22,16 +40,21 @@ def load_prompt(name: str) -> str:
 
 
 def load_config() -> dict:
-    """Load configuration from config.yaml."""
-    if not CONFIG_PATH.exists():
-        raise FileNotFoundError(f"Config file required: {CONFIG_PATH}")
-    try:
-        data = yaml.safe_load(CONFIG_PATH.read_text(encoding="utf-8")) or {}
-        if not isinstance(data, dict):
-            raise ValueError(f"Config file {CONFIG_PATH} is not a mapping.")
-        return data
-    except Exception as exc:
-        raise RuntimeError(f"Failed to load config {CONFIG_PATH}: {exc}")
+    """Load extraction configuration from llm_config.yml."""
+    llm_config = load_llm_config()
+    extraction_config = llm_config.get("extraction", {})
+    if not isinstance(extraction_config, dict):
+        LOGGER.warning("Extraction config is not a mapping; using defaults.")
+        extraction_config = {}
+    merged = {**DEFAULT_EXTRACTION_CONFIG, **extraction_config}
+    chunking = merged.get("chunking", {})
+    if not isinstance(chunking, dict):
+        chunking = {}
+    merged["chunking"] = {
+        **DEFAULT_EXTRACTION_CONFIG["chunking"],
+        **chunking,
+    }
+    return merged
 
 
 def load_class_context(class_name: str) -> str:

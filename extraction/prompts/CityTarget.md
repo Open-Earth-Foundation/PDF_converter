@@ -6,21 +6,46 @@ Context: Targets defined in the Climate City Contract (e.g., emission reductions
 - `cityId`: City UUID reference (optional, auto-linked if context available)
 - `indicatorId`: Indicator UUID reference (optional, auto-linked if context available)
 - `description`: Target description (REQUIRED)
-- `targetYear`: **VERIFIED FIELD** - Target year as 4-digit year (YYYY) (REQUIRED). Output as `{"value": "2030", "quote": "by 2030", "confidence": 0.95}`
-- `targetValue`: **VERIFIED FIELD** - Target value as decimal/number (REQUIRED). Output as `{"value": "80", "quote": "80% reduction", "confidence": 0.95}`
-- `baselineYear`: **VERIFIED FIELD** - Baseline year as 4-digit year (YYYY) - only if explicitly stated in document. Use null with verbatim quote ONLY if document explicitly says "not specified", "not available", "N/A", etc. Otherwise OMIT THIS FIELD.
-- `baselineValue`: **VERIFIED FIELD** - Baseline value as decimal/number - only if explicitly stated in document. Use null with verbatim quote ONLY if document explicitly says "not specified", "not available", "N/A", etc. Otherwise OMIT THIS FIELD.
-- `status`: **VERIFIED FIELD** - Target status (e.g., "on track", "at risk", "achieved") - OPTIONAL. Output as `{"value": "on track", "quote": "on track", "confidence": 0.9}` or omit the field if status is not mentioned in document.
+- **VERIFIED FIELDS** (each requires three fields: value, _quote, _confidence):
+  - `targetYear`: Target year as 4-digit year (YYYY) (REQUIRED)
+  - `targetYear_quote`: Verbatim quote from document (REQUIRED)
+  - `targetYear_confidence`: Confidence score 0.0-1.0 (REQUIRED)
+  - `targetValue`: Target value as decimal/number (REQUIRED)
+  - `targetValue_quote`: Verbatim quote from document (REQUIRED)
+  - `targetValue_confidence`: Confidence score 0.0-1.0 (REQUIRED)
+  - `baselineYear`: Baseline year as 4-digit year (YYYY) - OPTIONAL
+  - `baselineYear_quote`: Verbatim quote from document - OPTIONAL
+  - `baselineYear_confidence`: Confidence score 0.0-1.0 - OPTIONAL
+  - `baselineValue`: Baseline value as decimal/number - OPTIONAL
+  - `baselineValue_quote`: Verbatim quote from document - OPTIONAL
+  - `baselineValue_confidence`: Confidence score 0.0-1.0 - OPTIONAL
+  - `status`: Target status (e.g., "Set", "On track", "At risk", "Achieved") - OPTIONAL
+  - `status_quote`: Verbatim quote from document - OPTIONAL
+  - `status_confidence`: Confidence score 0.0-1.0 - OPTIONAL
 - `notes`: Catch-all field for any valuable insights (e.g., measurement methodology, assumptions, risk factors, policy drivers) - USE THIS FIELD for anything meaningful not covered by other fields
 
 **Verified Field Rules**:
 
-For `targetYear`, `targetValue`, `baselineYear`, `baselineValue`, and `status`:
-- Each must be output as a VerifiedField object with `value`, `quote`, and `confidence` properties (only when the field is present)
-- The `quote` must be verbatim text from the document
-- The `value` can be null ONLY if the document explicitly states absence (e.g., "not specified", "N/A", "not available") AND you can quote that text verbatim
-- If the document is silent about a field (just doesn't mention it), OMIT THE FIELD ENTIRELY—do not use null
+For verified fields (`targetYear`, `targetValue`, `baselineYear`, `baselineValue`, `status`):
+- Each verified field requires THREE fields in your output: the value, the `_quote`, and the `_confidence`
+- The `_quote` must be verbatim text from the document (exact match required)
+- The `_confidence` must be a number between 0.0 and 1.0
+- The value can be null ONLY if the document explicitly states absence (e.g., "not specified", "N/A", "not available") AND you can quote that text verbatim
+- If the document is silent about a field (just doesn't mention it), OMIT ALL THREE FIELDS—do not include the field, _quote, or _confidence
 - No inference or normalization - only literal values and quotes from source
+
+**Example**:
+```json
+{
+  "description": "80% reduction by 2030",
+  "targetYear": "2030",
+  "targetYear_quote": "by 2030",
+  "targetYear_confidence": 0.95,
+  "targetValue": "80",
+  "targetValue_quote": "80% reduction",
+  "targetValue_confidence": 0.95
+}
+```
 
 **Important: Quote Validation**
 - Your quotes will be validated against the source document

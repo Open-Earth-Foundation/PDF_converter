@@ -9,7 +9,7 @@ class DBSettings:
     """
     Single source of truth for DB connectivity.
 
-    Keep one env var: DATABASE_URL
+    Env var: DATABASE_URL
     Example:
       postgresql+psycopg://user:pass@localhost:5432/dbname
     """

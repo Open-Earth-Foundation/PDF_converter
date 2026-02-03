@@ -140,7 +140,6 @@ def upgrade() -> None:
         sa.Column("description", sa.Text(), nullable=True),
         sa.Column("notes", sa.Text(), nullable=True),
         sa.ForeignKeyConstraint(["cityId"], ["City.cityId"]),
-        sa.UniqueConstraint("cityId", "year"),
     )
 
     op.create_table(
