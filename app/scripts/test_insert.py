@@ -3,7 +3,7 @@ Brief: Report row counts and sample rows for all core tables.
 
 Inputs:
 - --limit: number of sample rows to show per table (default: 1)
-- Env: DATABASE_URL or DB_URL in the repo root .env file
+- Env: DATABASE_URL in the repo root .env file
 
 Outputs:
 - Logs counts and sample rows for each table
@@ -26,7 +26,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 from sqlalchemy import text
 
-from app.utils.logging_config import setup_logger
+from utils.logging_config import setup_logger
 from database.config import DBSettings
 from database.session import create_db_engine
 

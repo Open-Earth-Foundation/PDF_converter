@@ -26,10 +26,10 @@ target_metadata = Base.metadata
 
 
 def get_database_url() -> str:
-    url = os.getenv("DATABASE_URL") or os.getenv("DB_URL")
+    url = os.getenv("DATABASE_URL")
     if not url:
         raise RuntimeError(
-            "DATABASE_URL (or DB_URL) not set. Alembic needs it.\n"
+            "DATABASE_URL not set. Alembic needs it.\n"
             "Example: postgresql+psycopg://user:pass@localhost:5432/dbname"
         )
     return url

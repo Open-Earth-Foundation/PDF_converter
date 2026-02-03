@@ -24,7 +24,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from app.utils.logging_config import setup_logger
+from utils.logging_config import setup_logger
 
 LOGGER = logging.getLogger(__name__)
 

@@ -1,9 +1,9 @@
 """
-Brief: Test database connectivity using the configured DATABASE_URL (or DB_URL).
+Brief: Test database connectivity using the configured DATABASE_URL.
 
 Inputs:
 - --db-url: optional override connection string
-- Env: DATABASE_URL or DB_URL in the repo root .env file
+- Env: DATABASE_URL in the repo root .env file
 
 Outputs:
 - Logs connection status and a simple SELECT 1 result
@@ -23,7 +23,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 from sqlalchemy import text
 
-from app.utils.logging_config import setup_logger
+from utils.logging_config import setup_logger
 from database.config import DBSettings
 from database.session import create_db_engine
 

@@ -21,7 +21,7 @@ Inputs:
   If any table fails, entire load is rolled back
 - --per-city: Use per-city atomic transactions (each city's data is all-or-nothing,
   but different cities load independently). Useful for partial recovery if one city fails
-- Env: DATABASE_URL or DB_URL (loaded from .env for database connection)
+- Env: DATABASE_URL (loaded from .env for database connection)
 
 Outputs:
 - Inserts rows into the database (unless --dry-run)
@@ -47,7 +47,7 @@ from app.modules.db_insert.loader import (
     ensure_report_path,
     run_load,
 )
-from app.utils.logging_config import setup_logger
+from utils.logging_config import setup_logger
 
 LOGGER = logging.getLogger(__name__)
 

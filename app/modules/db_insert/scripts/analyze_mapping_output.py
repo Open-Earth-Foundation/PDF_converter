@@ -44,7 +44,7 @@ from app.modules.db_insert.loader import (
     get_record_id,
     read_json_list,
 )
-from app.utils.logging_config import setup_logger
+from utils.logging_config import setup_logger
 
 LOGGER = logging.getLogger(__name__)
 

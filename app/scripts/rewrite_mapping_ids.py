@@ -30,7 +30,7 @@ from collections import Counter
 from pathlib import Path
 from uuid import UUID, uuid5
 
-from app.utils.logging_config import setup_logger
+from utils.logging_config import setup_logger
 from mapping.utils.llm_utils import load_json_list, write_json
 from mapping.utils.validate_foreign_keys import TABLE_CONFIG, build_pk_index, find_fk_issues
 

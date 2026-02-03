@@ -24,7 +24,7 @@ TABLE CATEGORIES:
 Inputs:
 - --json-dir: directory with mapped JSON files (default: output/mapping/step3_llm)
 - --city-id: optional city UUID to verify specific city only
-- Env: DATABASE_URL or DB_URL (loaded from .env)
+- Env: DATABASE_URL (loaded from .env)
 
 Outputs:
 - Detailed report comparing JSON counts vs DB row counts
@@ -51,7 +51,7 @@ from uuid import UUID
 from dotenv import load_dotenv
 from sqlalchemy import text
 
-from app.utils.logging_config import setup_logger
+from utils.logging_config import setup_logger
 from database.config import DBSettings
 from database.session import create_db_engine
 

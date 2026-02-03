@@ -26,7 +26,7 @@ from dotenv import load_dotenv
 from app.modules.db_insert.loader import run_load
 from app.scripts.test_db_connection import main as test_connection
 from app.scripts.test_insert import main as test_insert
-from app.utils.logging_config import setup_logger
+from utils.logging_config import setup_logger
 
 LOGGER = logging.getLogger(__name__)
 

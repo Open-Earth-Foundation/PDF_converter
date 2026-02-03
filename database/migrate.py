@@ -37,9 +37,9 @@ LOGGER = logging.getLogger(__name__)
 
 
 def require_database_url() -> None:
-    if not (os.getenv("DATABASE_URL") or os.getenv("DB_URL")):
+    if not os.getenv("DATABASE_URL"):
         raise RuntimeError(
-            "DATABASE_URL (or DB_URL) is not set.\n\n"
+            "DATABASE_URL is not set.\n\n"
             "Example:\n"
             "  postgresql+psycopg://urbind:urbind@dev-db-aurora.cluster-c5ipsfxjhb0m.us-east-1.rds.amazonaws.com:5432/urbind"
         )

@@ -23,7 +23,7 @@ import logging
 from collections import deque
 from pathlib import Path
 
-from app.utils.logging_config import setup_logger
+from utils.logging_config import setup_logger
 from mapping.utils.llm_utils import load_json_list, write_json
 
 LOGGER = logging.getLogger(__name__)
