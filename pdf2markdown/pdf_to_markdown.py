@@ -38,21 +38,39 @@ def main(args: argparse.Namespace) -> int:
     input_path = Path(args.input)
     output_root = Path(args.output_dir)
 
-    # Validate input file exists
+    # Validate input path exists
     if not input_path.exists():
-        logger.error("Input file does not exist: %s", input_path)
+        logger.error("Input path does not exist: %s", input_path)
         return 1
 
-    if not input_path.is_file():
-        logger.error("Input path is not a file: %s", input_path)
-        return 1
+    # Handle both single file and directory
+    if input_path.is_file():
+        pdfs = [input_path]
+    elif input_path.is_dir():
+        # Get all PDF files from the directory (non-recursive by default, unless recursive flag is set)
+        pattern = args.pattern if args.pattern else "*.pdf"
+        if args.recursive:
+            pdfs = sorted(input_path.glob(f"**/{pattern}"))
+        else:
+            pdfs = sorted(input_path.glob(pattern))
 
-    pdfs = [input_path]
+        if not pdfs:
+            logger.error(
+                "No PDF files found in directory: %s (pattern: %s)", input_path, pattern
+            )
+            return 1
+
+        logger.info("Found %d PDF file(s) in directory: %s", len(pdfs), input_path)
+    else:
+        logger.error("Input path is neither a file nor a directory: %s", input_path)
+        return 1
 
     llm_cfg = load_llm_config().get("pdf2markdown", {})
 
     ocr_model = (os.environ.get("OCR_MODEL") or llm_cfg.get("ocr_model", "")).strip()
-    vision_model = (args.vision_model or os.environ.get("VISION_MODEL") or llm_cfg.get("model", "")).strip()
+    vision_model = (
+        args.vision_model or os.environ.get("VISION_MODEL") or llm_cfg.get("model", "")
+    ).strip()
     if vision_model.lower() in {"", "none", "off", "disable"}:
         vision_model = ""
 
@@ -138,6 +156,16 @@ def parse_args() -> argparse.Namespace:
         type=float,
         default=None,
         help="Override vision temperature (defaults to llm_config.yml pdf2markdown.temperature).",
+    )
+    parser.add_argument(
+        "--pattern",
+        default="*.pdf",
+        help="File pattern to match when input is a directory (default: *.pdf).",
+    )
+    parser.add_argument(
+        "--recursive",
+        action="store_true",
+        help="Recursively search for PDFs in subdirectories (when input is a directory).",
     )
     return parser.parse_args()
 
