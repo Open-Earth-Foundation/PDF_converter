@@ -14,15 +14,21 @@ This repository contains a single AI project. All contributions must optimize fo
 
 This repo includes **project-level Cursor skills** under `.cursor/skills/` (version-controlled). These skills are available to anyone who checks out the repository and opens it in Cursor. See [Cursor Skills docs](https://cursor.com/docs/context/skills).
 
-### Mandatory after code changes
-
-After **any code change** (add/edit/delete/rename), you must apply the `docs-after-change` skill before ending your turn.
-
 Skills included:
 
+- `simplify-after-change`: **Mandatory** after any code change. Simplifies the changed code, removes unnecessary complexity, and keeps behavior identical.
 - `docs-after-change`: **Mandatory** after any code change. Keeps docstrings/README/architecture accurate.
 - `script-quality-gate`: Use when adding/changing a runnable script or CLI entrypoint.
 - `repo-doc-audit`: One-off full repo documentation audit (**manual** via `/repo-doc-audit`).
+
+### Mandatory after code changes
+
+After **any code change** (add/edit/delete/rename), you must apply BOTH skills before ending your turn:
+
+1. `simplify-after-change`
+2. `docs-after-change`
+
+If you intentionally skip a mandatory skill, leave a one-line justification in your response message.
 
 ---
 
@@ -254,9 +260,9 @@ __all__ = ["setup_logger"]
 
 ### Prefer clarity over cleverness
 
-- Prefer clear, explicit code over overly compact code.
-- Avoid dense one-liners, deeply nested comprehensions, and overly abstract helper chains when they reduce readability.
-- Optimize for the next person reading the code, not for brevity.
+- Default to boring, explicit code.
+- Avoid unnecessary abstractions and typing scaffolding.
+- After any code change, run `simplify-after-change` to remove complexity that does not pay for itself.
 
 ---
 
@@ -325,3 +331,4 @@ When making changes:
 - [ ] Logging used instead of print
 - [ ] pytest coverage added or updated when feasible
 - [ ] Type hints present in all function signatures
+- [ ] `simplify-after-change` applied after any code change (or one-line justification if skipped)
