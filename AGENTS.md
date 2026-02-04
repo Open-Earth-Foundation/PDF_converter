@@ -10,6 +10,28 @@ This repository contains a single AI project. All contributions must optimize fo
 
 ---
 
+## Cursor Agent Skills (project-level)
+
+This repo includes **project-level Cursor skills** under `.cursor/skills/` (version-controlled). These skills are available to anyone who checks out the repository and opens it in Cursor. See [Cursor Skills docs](https://cursor.com/docs/context/skills).
+
+Skills included:
+
+- `simplify-after-change`: **Mandatory** after any code change. Simplifies the changed code, removes unnecessary complexity, and keeps behavior identical.
+- `docs-after-change`: **Mandatory** after any code change. Keeps docstrings/README/architecture accurate.
+- `script-quality-gate`: Use when adding/changing a runnable script or CLI entrypoint.
+- `repo-doc-audit`: One-off full repo documentation audit (**manual** via `/repo-doc-audit`).
+
+### Mandatory after code changes
+
+After **any code change** (add/edit/delete/rename), you must apply BOTH skills before ending your turn:
+
+1. `simplify-after-change`
+2. `docs-after-change`
+
+If you intentionally skip a mandatory skill, leave a one-line justification in your response message.
+
+---
+
 ## Documentation requirements
 
 ### README.md must be up to date
@@ -26,7 +48,7 @@ Every repo must have a `README.md` with:
 Every script intended to be executed must include a **top-level docstring** describing:
 
 - What the script does (brief)
-- Inputs (files, env vars, CLI args)
+- Inputs (files, env vars, CLI args) with **enough detail to be self-explanatory**
 - Outputs (files, stdout, DB writes, API responses)
 - Usage examples (run as a module)
 
@@ -37,7 +59,11 @@ Every script intended to be executed must include a **top-level docstring** desc
 Brief: <one-liner description>
 
 Inputs:
-- <list inputs, files, env vars, args>
+- CLI args: list each `--flag` with a short description of what it does and the expected format.
+  - Example: `--input-dir`: Directory containing JSON files produced by the previous step.
+  - Example: `--mode`: `validate` (no writes) or `apply` (writes enabled).
+- Files/paths: describe expected structure/patterns (e.g. “directory of JSON lists”).
+- Env vars: list required env vars and what they control (do not include secrets).
 
 Outputs:
 - <files, stdout, DB writes, API responses, etc.>
@@ -111,6 +137,13 @@ Notes:
 - Do not commit `.env`. Use `.env.example` to document required variables.
 - If you need non-code assets (sample prompts, fixtures, tiny sample data), put them in a clearly named folder, for example `assets/` or `tests/fixtures/`.
 
+Adaptation note (project-specific naming):
+
+- The folder name `app/` in the hierarchy above is a **placeholder** for the project’s main application package/folder.
+- A given repository may deviate (e.g., the “app” code may live in multiple top-level packages, or the folder may be named differently). In that case, follow the **existing** repository layout and map the same concepts:
+  - “app-level code” = the primary top-level package(s) containing application logic
+  - “modules” = subpackages/features within that package (or equivalent top-level packages if the repo is split)
+
 ---
 
 ## Standalone scripts rules
@@ -162,6 +195,16 @@ if __name__ == "__main__":
 - If logic is reusable, it belongs in `app/utils/` (global) or `app/modules/<module>/utils/` (local).
 - Do not copy or paste functions across scripts.
 - Import shared helpers instead.
+
+### Docstrings are required (functions and methods)
+
+- Every Python **function and method** must have a docstring.
+  - **Trivial** functions/methods: a minimal **one-liner** is enough.
+  - **Non-trivial** or side-effecting functions/methods: docstring must describe:
+    - inputs/parameters (expected types/shape and any constraints)
+    - return value (and what it represents)
+    - side effects (filesystem/DB/network, mutations, logging, caching)
+    - raised exceptions (when non-obvious)
 
 ### Logging is required
 
@@ -217,9 +260,9 @@ __all__ = ["setup_logger"]
 
 ### Prefer clarity over cleverness
 
-- Prefer clear, explicit code over overly compact code.
-- Avoid dense one-liners, deeply nested comprehensions, and overly abstract helper chains when they reduce readability.
-- Optimize for the next person reading the code, not for brevity.
+- Default to boring, explicit code.
+- Avoid unnecessary abstractions and typing scaffolding.
+- After any code change, run `simplify-after-change` to remove complexity that does not pay for itself.
 
 ---
 
@@ -288,3 +331,4 @@ When making changes:
 - [ ] Logging used instead of print
 - [ ] pytest coverage added or updated when feasible
 - [ ] Type hints present in all function signatures
+- [ ] `simplify-after-change` applied after any code change (or one-line justification if skipped)
