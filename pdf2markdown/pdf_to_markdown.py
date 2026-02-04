@@ -22,6 +22,7 @@ from __future__ import annotations
 import argparse
 import logging
 import os
+import time
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -30,6 +31,74 @@ from utils import load_llm_config, setup_logger
 from pdf2markdown.utils.pdf_to_markdown_pipeline import pdf_to_markdown_pipeline
 
 logger = logging.getLogger(__name__)
+
+
+def process_pdf_with_retry(
+    pdf: Path,
+    output_root: Path,
+    include_images: bool,
+    ocr_model: str,
+    save_response: bool,
+    vision_model: str,
+    vision_max_rounds: int,
+    vision_temperature: float,
+    vision_max_retries: int,
+    vision_retry_base_delay: float,
+    max_upload_bytes: int,
+    max_attempts: int = 3,
+    retry_delay: float = 5.0,
+) -> bool:
+    """
+    Process a PDF with automatic retry on transient failures.
+
+    Args:
+        pdf: Path to PDF file
+        max_attempts: Number of retry attempts (default: 3)
+        retry_delay: Initial delay between retries in seconds (default: 5.0)
+
+    Returns:
+        True if successful, False if all attempts failed
+    """
+    for attempt in range(1, max_attempts + 1):
+        try:
+            logger.info("Processing %s (attempt %d/%d)", pdf, attempt, max_attempts)
+            pdf_to_markdown_pipeline(
+                pdf,
+                output_root,
+                include_images=include_images,
+                ocr_model=ocr_model,
+                save_response=save_response,
+                save_page_markdown=True,
+                vision_model=vision_model,
+                vision_max_rounds=vision_max_rounds,
+                vision_temperature=vision_temperature,
+                vision_max_retries=vision_max_retries,
+                vision_retry_base_delay=vision_retry_base_delay,
+                max_upload_bytes=max_upload_bytes,
+            )
+            logger.info("✓ Successfully processed %s", pdf)
+            return True
+        except Exception as exc:
+            if attempt < max_attempts:
+                # Calculate exponential backoff delay
+                delay = retry_delay * (2 ** (attempt - 1))
+                logger.warning(
+                    "Attempt %d/%d failed for %s: %s. Retrying in %.1f seconds...",
+                    attempt,
+                    max_attempts,
+                    pdf,
+                    str(exc)[:100],  # Truncate long error messages
+                    delay,
+                )
+                time.sleep(delay)
+            else:
+                logger.error(
+                    "✗ Failed to convert %s after %d attempts: %s",
+                    pdf,
+                    max_attempts,
+                    exc,
+                )
+    return False
 
 
 def main(args: argparse.Namespace) -> int:
@@ -85,31 +154,39 @@ def main(args: argparse.Namespace) -> int:
     )
 
     successes = 0
+    failures = []
     logger.info("Found %d PDF(s) to process.", len(pdfs))
-    for pdf in pdfs:
-        logger.info("Processing %s", pdf)
-        try:
-            pdf_to_markdown_pipeline(
-                pdf,
-                output_root,
-                include_images=not args.no_images,
-                ocr_model=ocr_model,
-                save_response=args.save_response,
-                save_page_markdown=True,
-                vision_model=vision_model,
-                vision_max_rounds=vision_max_rounds,
-                vision_temperature=vision_temperature,
-                vision_max_retries=vision_max_retries,
-                vision_retry_base_delay=vision_retry_base_delay,
-                max_upload_bytes=args.max_upload_bytes,
-            )
-        except Exception as exc:  # pragma: no cover - defensive
-            logger.exception("Failed to convert %s: %s", pdf, exc)
-        else:
-            successes += 1
 
-    logger.info("Completed %d/%d conversions.", successes, len(pdfs))
-    return 0 if successes else 2
+    for pdf in pdfs:
+        success = process_pdf_with_retry(
+            pdf,
+            output_root,
+            include_images=not args.no_images,
+            ocr_model=ocr_model,
+            save_response=args.save_response,
+            vision_model=vision_model,
+            vision_max_rounds=vision_max_rounds,
+            vision_temperature=vision_temperature,
+            vision_max_retries=vision_max_retries,
+            vision_retry_base_delay=vision_retry_base_delay,
+            max_upload_bytes=args.max_upload_bytes,
+            max_attempts=args.max_retries,
+            retry_delay=args.retry_delay,
+        )
+        if success:
+            successes += 1
+        else:
+            failures.append(str(pdf))
+
+    logger.info("=" * 80)
+    logger.info("SUMMARY: Completed %d/%d conversions.", successes, len(pdfs))
+    if failures:
+        logger.warning("Failed files (%d):", len(failures))
+        for f in failures:
+            logger.warning("  - %s", f)
+    logger.info("=" * 80)
+
+    return 0 if successes == len(pdfs) else (1 if successes else 2)
 
 
 def parse_args() -> argparse.Namespace:
@@ -166,6 +243,18 @@ def parse_args() -> argparse.Namespace:
         "--recursive",
         action="store_true",
         help="Recursively search for PDFs in subdirectories (when input is a directory).",
+    )
+    parser.add_argument(
+        "--max-retries",
+        type=int,
+        default=3,
+        help="Maximum number of retry attempts for each PDF (default: 3).",
+    )
+    parser.add_argument(
+        "--retry-delay",
+        type=float,
+        default=5.0,
+        help="Initial delay in seconds between retries, increases exponentially (default: 5.0).",
     )
     return parser.parse_args()
 
