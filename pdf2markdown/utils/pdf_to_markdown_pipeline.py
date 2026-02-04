@@ -813,7 +813,9 @@ def pdf_to_markdown_pipeline(
         markdown_chunks.append(page_markdown)
 
         if save_page_markdown:
-            page_markdown_path = document_dir / f"page-{page_index:04d}.md"
+            pages_dir = document_dir / "pages"
+            pages_dir.mkdir(exist_ok=True)
+            page_markdown_path = pages_dir / f"page-{page_index:04d}.md"
             page_markdown_path.write_text(page_markdown, encoding="utf-8")
             logger.debug("Wrote per-page markdown: %s", page_markdown_path.name)
 
@@ -839,7 +841,8 @@ def pdf_to_markdown_pipeline(
 
     final_markdown = normalize_toc_markdown(final_markdown) if final_markdown else ""
 
-    markdown_path = document_dir / "combined_markdown.md"
+    # Name the combined markdown file after the PDF stem (city name)
+    markdown_path = document_dir / f"{pdf_path.stem}.md"
     markdown_path.write_text(final_markdown, encoding="utf-8")
     logger.info("Wrote Markdown to %s", markdown_path)
 
